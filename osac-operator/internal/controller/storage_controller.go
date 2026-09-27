@@ -381,9 +381,7 @@ func (r *StorageReconciler) handleUpdate(ctx context.Context, instance *v1alpha1
 					v1alpha1.TenantReasonMultipleFound,
 					condMsg)
 				instance.Status.StorageClasses = nil
-				instance.Status.ClusterStorage = []v1alpha1.ClusterStorageStatus{
-					{ClusterName: clusterName, Ready: false, Reason: v1alpha1.TenantReasonMultipleFound},
-				}
+				r.updateTenantVMaaSStorage(instance, clusterName, false, v1alpha1.TenantReasonMultipleFound)
 				return ctrl.Result{}, nil
 			}
 
@@ -394,9 +392,7 @@ func (r *StorageReconciler) handleUpdate(ctx context.Context, instance *v1alpha1
 				v1alpha1.TenantReasonNotFound,
 				condMsg)
 			instance.Status.StorageClasses = nil
-			instance.Status.ClusterStorage = []v1alpha1.ClusterStorageStatus{
-				{ClusterName: clusterName, Ready: false, Reason: v1alpha1.TenantReasonNotFound},
-			}
+			r.updateTenantVMaaSStorage(instance, clusterName, false, v1alpha1.TenantReasonNotFound)
 
 			return r.handleClusterStorageProvisioning(ctx, instance, hubSecretReady)
 		}
@@ -429,9 +425,8 @@ func (r *StorageReconciler) handleUpdate(ctx context.Context, instance *v1alpha1
 				condMsg)
 		}
 		instance.Status.StorageClasses = scResult.resolved
-		instance.Status.ClusterStorage = []v1alpha1.ClusterStorageStatus{
-			{ClusterName: clusterName, Ready: !hasMissingTiers, Reason: v1alpha1.TenantReasonFound},
-		}
+		r.updateTenantVMaaSStorage(instance, clusterName, !hasMissingTiers, v1alpha1.TenantReasonFound)
+
 	} else {
 		// When no provisioning provider is configured, resolve StorageClasses
 		// labeled osac.openshift.io/tenant=<tenantName>. This serves environments
@@ -457,9 +452,7 @@ func (r *StorageReconciler) handleUpdate(ctx context.Context, instance *v1alpha1
 				reason,
 				condMsg)
 			instance.Status.StorageClasses = nil
-			instance.Status.ClusterStorage = []v1alpha1.ClusterStorageStatus{
-				{ClusterName: clusterName, Ready: false, Reason: reason},
-			}
+			r.updateTenantVMaaSStorage(instance, clusterName, false, reason)
 			return ctrl.Result{}, nil
 		}
 
@@ -469,9 +462,7 @@ func (r *StorageReconciler) handleUpdate(ctx context.Context, instance *v1alpha1
 			v1alpha1.TenantReasonFound,
 			condMsg)
 		instance.Status.StorageClasses = result.resolved
-		instance.Status.ClusterStorage = []v1alpha1.ClusterStorageStatus{
-			{ClusterName: clusterName, Ready: true, Reason: v1alpha1.TenantReasonFound},
-		}
+		r.updateTenantVMaaSStorage(instance, clusterName, true, v1alpha1.TenantReasonFound)
 	}
 
 	// Stage 3: provision cluster-side storage on CaaS clusters owned by this tenant.
@@ -657,6 +648,10 @@ func (r *StorageReconciler) buildClientFromKubeconfig(kubeconfig []byte) (client
 	return c, nil
 }
 
+func (r *StorageReconciler) updateTenantVMaaSStorage(tenant *v1alpha1.Tenant, clusterName string, ready bool, reason string) {
+	r.upsertTenantClusterStorage(tenant, clusterName, ready, reason)
+}
+
 // updateTenantClusterStorage adds or updates the CaaS cluster entry in
 // Tenant.status.clusterStorage without overwriting existing entries.
 func (r *StorageReconciler) updateTenantClusterStorage(tenant *v1alpha1.Tenant, co *v1alpha1.ClusterOrder) {
@@ -669,6 +664,10 @@ func (r *StorageReconciler) updateTenantClusterStorage(tenant *v1alpha1.Tenant, 
 		reason = cond.Reason
 	}
 
+	r.upsertTenantClusterStorage(tenant, clusterName, ready, reason)
+}
+
+func (r *StorageReconciler) upsertTenantClusterStorage(tenant *v1alpha1.Tenant, clusterName string, ready bool, reason string) {
 	for i, cs := range tenant.Status.ClusterStorage {
 		if cs.ClusterName == clusterName {
 			tenant.Status.ClusterStorage[i].Ready = ready
