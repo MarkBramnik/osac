@@ -2698,6 +2698,16 @@ var _ = Describe("Storage Controller", func() {
 			Expect(k8sClient.Create(ctx, co)).To(Succeed())
 			DeferCleanup(func() { _ = k8sClient.Delete(ctx, co) })
 
+			tenant := &v1alpha1.Tenant{}
+			nn := types.NamespacedName{Name: tenantName, Namespace: testNamespace}
+			Expect(k8sClient.Get(ctx, nn, tenant)).To(Succeed())
+			tenant.Status.ClusterStorage = []v1alpha1.ClusterStorageStatus{{
+				ClusterName: co.Name,
+				Ready:       true,
+				Reason:      v1alpha1.TenantReasonFound,
+			}}
+			Expect(k8sClient.Status().Update(ctx, tenant)).To(Succeed())
+
 			co.Status.Phase = v1alpha1.ClusterOrderPhaseReady
 			Expect(k8sClient.Status().Update(ctx, co)).To(Succeed())
 
@@ -2707,15 +2717,25 @@ var _ = Describe("Storage Controller", func() {
 				nil, nil, pollInterval, provisioning.DefaultMaxJobHistory,
 			)
 
-			nn := types.NamespacedName{Name: tenantName, Namespace: testNamespace}
 			_, err := r.Reconcile(ctx, storageReconcileRequest(nn))
 			Expect(err).NotTo(HaveOccurred())
 
 			// VMaaS StorageClass should still be resolved on the Tenant
-			tenant := &v1alpha1.Tenant{}
 			Expect(k8sClient.Get(ctx, nn, tenant)).To(Succeed())
 			Expect(tenant.Status.StorageClasses).To(HaveLen(1))
 			Expect(tenant.Status.StorageClasses[0].Name).To(Equal(tenantName + "-vmaas-sc"))
+			Expect(tenant.Status.ClusterStorage).To(ConsistOf(
+				v1alpha1.ClusterStorageStatus{
+					ClusterName: co.Name,
+					Ready:       true,
+					Reason:      v1alpha1.TenantReasonFound,
+				},
+				v1alpha1.ClusterStorageStatus{
+					ClusterName: string(mcmanager.LocalCluster),
+					Ready:       true,
+					Reason:      v1alpha1.TenantReasonFound,
+				},
+			))
 
 			clusterCond := tenant.GetStatusCondition(v1alpha1.TenantConditionClusterStorageReady)
 			Expect(clusterCond).NotTo(BeNil())
