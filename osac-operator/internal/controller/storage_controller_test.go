@@ -1804,6 +1804,20 @@ var _ = Describe("Storage Controller", func() {
 			Expect(backendCond).NotTo(BeNil())
 			Expect(backendCond.Status).To(Equal(metav1.ConditionFalse),
 				"should not be True when only some providers have hub Secrets")
+			Expect(tenant.Status.StorageBackends).To(ConsistOf(
+				v1alpha1.StorageBackendStatus{
+					Name:     "backend-lvms",
+					Provider: "lvms",
+					Ready:    true,
+					Message:  fmt.Sprintf("Hub Secret for tenant %q exists", name),
+				},
+				v1alpha1.StorageBackendStatus{
+					Name:     "backend-vast",
+					Provider: "vast",
+					Ready:    false,
+					Message:  fmt.Sprintf("Hub Secret for tenant %q not found", name),
+				},
+			))
 		})
 
 		It("should set StorageBackendReady=True when hub Secrets exist for all dispatched providers", func() {
@@ -1866,6 +1880,20 @@ var _ = Describe("Storage Controller", func() {
 			Expect(backendCond).NotTo(BeNil())
 			Expect(backendCond.Status).To(Equal(metav1.ConditionTrue),
 				"should be True when all providers have hub Secrets")
+			Expect(tenant.Status.StorageBackends).To(ConsistOf(
+				v1alpha1.StorageBackendStatus{
+					Name:     "backend-lvms",
+					Provider: "lvms",
+					Ready:    true,
+					Message:  fmt.Sprintf("Hub Secret for tenant %q exists", name),
+				},
+				v1alpha1.StorageBackendStatus{
+					Name:     "backend-vast",
+					Provider: "vast",
+					Ready:    true,
+					Message:  fmt.Sprintf("Hub Secret for tenant %q exists", name),
+				},
+			))
 		})
 
 		It("should fall back to any-secret check when no tier definitions are available", func() {

@@ -210,6 +210,7 @@ func (r *StorageReconciler) patchTenantStorageStatus(ctx context.Context, key cl
 		}
 		base := latest.DeepCopy()
 		latest.Status.StorageClasses = computed.StorageClasses
+		latest.Status.StorageBackends = computed.StorageBackends
 		latest.Status.ClusterStorage = computed.ClusterStorage
 		latest.Status.StorageBackendJobs = computed.StorageBackendJobs
 		latest.Status.ClusterStorageJobs = computed.ClusterStorageJobs
@@ -248,10 +249,12 @@ func (r *StorageReconciler) patchClusterOrderStorageStatus(ctx context.Context, 
 // When nil or empty (no Tier API configured), it falls back to checking for
 // any hub Secret regardless of provider — preserving backward compatibility.
 func (r *StorageReconciler) handleBackendReadiness(ctx context.Context, instance *v1alpha1.Tenant, tenantName string, tierDefinitions []provisioning.TierDefinition) (hubSecretReady bool, result ctrl.Result, stop bool, err error) {
-	hubSecretReady, err = r.allBackendHubSecretsExist(ctx, tenantName, tierDefinitions)
+	statuses, allReady, err := r.storageBackendStatuses(ctx, tenantName, tierDefinitions)
 	if err != nil {
 		return false, ctrl.Result{}, true, err
 	}
+	instance.Status.StorageBackends = statuses
+	hubSecretReady = allReady
 
 	if hubSecretReady {
 		instance.SetStatusCondition(v1alpha1.TenantConditionStorageBackendReady,
@@ -347,8 +350,6 @@ func (r *StorageReconciler) handleUpdate(ctx context.Context, instance *v1alpha1
 	if stop {
 		return stageResult, err
 	}
-	// TODO(OSAC-1111): populate StorageBackendStatus once StorageBackend API provides name/provider
-
 	// Stage 2: resolve StorageClasses on target cluster.
 	targetClient, err := getTargetClient(ctx, r.mgr, r.targetCluster)
 	if err != nil {
@@ -975,43 +976,59 @@ func (r *StorageReconciler) handleBackendDeprovisioning(ctx context.Context, ins
 
 // --- Helpers ---
 
-// uniqueProviders extracts the sorted, deduplicated provider names from tier
-// definitions. An empty or nil input returns an empty slice (no providers known).
-func uniqueProviders(tierDefinitions []provisioning.TierDefinition) []string {
-	seen := make(map[string]struct{})
-	var providers []string
-	for _, td := range tierDefinitions {
-		if td.Provider != "" {
-			if _, ok := seen[td.Provider]; !ok {
-				seen[td.Provider] = struct{}{}
-				providers = append(providers, td.Provider)
-			}
+// storageBackendStatuses reports readiness for each unique backend referenced by
+// the resolved tier definitions. A TierDefinition represents the supported model
+// of one backend association per tier; multi-backend tiers are intentionally not
+// expanded here. When tier definitions are unavailable, the legacy any-Secret
+// check is retained for environments without Tier API data.
+func (r *StorageReconciler) storageBackendStatuses(ctx context.Context, tenantName string, tierDefinitions []provisioning.TierDefinition) ([]v1alpha1.StorageBackendStatus, bool, error) {
+	backendProviders := make(map[string]string)
+	for _, tier := range tierDefinitions {
+		if tier.BackendID != "" && tier.Provider != "" {
+			backendProviders[tier.BackendID] = tier.Provider
 		}
 	}
-	sort.Strings(providers)
-	return providers
-}
 
-// allBackendHubSecretsExist checks whether hub Secrets exist for every unique
-// provider in tierDefinitions. When tierDefinitions is nil or empty, or when no
-// provider names can be extracted, it falls back to checking for any hub Secret
-// regardless of provider — preserving backward compatibility with environments
-// that run without a Tier API connection.
-func (r *StorageReconciler) allBackendHubSecretsExist(ctx context.Context, tenantName string, tierDefinitions []provisioning.TierDefinition) (bool, error) {
-	providers := uniqueProviders(tierDefinitions)
-	if len(providers) == 0 {
-		return r.hubSecretExists(ctx, tenantName, "")
+	if len(backendProviders) == 0 {
+		ready, err := r.hubSecretExists(ctx, tenantName, "")
+		return nil, ready, err
 	}
-	for _, provider := range providers {
-		exists, err := r.hubSecretExists(ctx, tenantName, provider)
-		if err != nil {
-			return false, err
-		}
-		if !exists {
-			return false, nil
-		}
+
+	backendIDs := make([]string, 0, len(backendProviders))
+	for backendID := range backendProviders {
+		backendIDs = append(backendIDs, backendID)
 	}
-	return true, nil
+	sort.Strings(backendIDs)
+
+	statuses := make([]v1alpha1.StorageBackendStatus, 0, len(backendIDs))
+	providerReady := make(map[string]bool)
+	allReady := true
+	for _, backendID := range backendIDs {
+		provider := backendProviders[backendID]
+		ready, checked := providerReady[provider]
+		if !checked {
+			var err error
+			ready, err = r.hubSecretExists(ctx, tenantName, provider)
+			if err != nil {
+				return nil, false, fmt.Errorf("check credentials for storage backend %q: %w", backendID, err)
+			}
+			providerReady[provider] = ready
+		}
+
+		message := fmt.Sprintf("Hub Secret for tenant %q exists", tenantName)
+		if !ready {
+			message = fmt.Sprintf("Hub Secret for tenant %q not found", tenantName)
+			allReady = false
+		}
+		statuses = append(statuses, v1alpha1.StorageBackendStatus{
+			Name:     backendID,
+			Provider: provider,
+			Ready:    ready,
+			Message:  message,
+		})
+	}
+
+	return statuses, allReady, nil
 }
 
 func (r *StorageReconciler) hubSecretExists(ctx context.Context, tenantName string, provider string) (bool, error) {
