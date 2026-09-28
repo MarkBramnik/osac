@@ -989,9 +989,12 @@ func (r *StorageReconciler) storageBackendStatuses(ctx context.Context, tenantNa
 		}
 	}
 
+	providerSecrets, anySecret, err := r.hubSecretsByProvider(ctx, tenantName)
+	if err != nil {
+		return nil, false, err
+	}
 	if len(backendProviders) == 0 {
-		ready, err := r.hubSecretExists(ctx, tenantName, "")
-		return nil, ready, err
+		return nil, anySecret, nil
 	}
 
 	backendIDs := make([]string, 0, len(backendProviders))
@@ -1001,19 +1004,10 @@ func (r *StorageReconciler) storageBackendStatuses(ctx context.Context, tenantNa
 	sort.Strings(backendIDs)
 
 	statuses := make([]v1alpha1.StorageBackendStatus, 0, len(backendIDs))
-	providerReady := make(map[string]bool)
 	allReady := true
 	for _, backendID := range backendIDs {
 		provider := backendProviders[backendID]
-		ready, checked := providerReady[provider]
-		if !checked {
-			var err error
-			ready, err = r.hubSecretExists(ctx, tenantName, provider)
-			if err != nil {
-				return nil, false, fmt.Errorf("check credentials for storage backend %q: %w", backendID, err)
-			}
-			providerReady[provider] = ready
-		}
+		ready := providerSecrets[provider]
 
 		message := fmt.Sprintf("Hub Secret for tenant %q exists", tenantName)
 		if !ready {
@@ -1029,6 +1023,25 @@ func (r *StorageReconciler) storageBackendStatuses(ctx context.Context, tenantNa
 	}
 
 	return statuses, allReady, nil
+}
+
+func (r *StorageReconciler) hubSecretsByProvider(ctx context.Context, tenantName string) (map[string]bool, bool, error) {
+	labels := map[string]string{osacTenantKey: tenantName}
+	var secretList corev1.SecretList
+	if err := r.List(ctx, &secretList,
+		client.InNamespace(storageConfigNamespace()),
+		client.MatchingLabels(labels),
+	); err != nil {
+		return nil, false, err
+	}
+
+	providers := make(map[string]bool)
+	for _, secret := range secretList.Items {
+		if provider := secret.Labels[osacStorageProviderLabel]; provider != "" {
+			providers[provider] = true
+		}
+	}
+	return providers, len(secretList.Items) > 0, nil
 }
 
 func (r *StorageReconciler) hubSecretExists(ctx context.Context, tenantName string, provider string) (bool, error) {
