@@ -77,20 +77,90 @@
       ansible.builtin.set_fact:
         vast_storage_vip_pool_name: "osac-{{ tenant_name }}-vippool"
 
+    - name: Pause before VAST VIP-pool lookup for live diagnostics
+      ansible.builtin.pause:
+        seconds: 300
+        prompt: "Diagnostic pause before querying the VAST VIP pool"
+
     # Server-side name filter keeps this O(1) as per-tenant pools grow with
     # tenant count (mirrors the ?name= lookups for tenants/localproviders below).
     - name: Look up the conventional VIP pool by name
-      ansible.builtin.uri:
-        url: "https://{{ vast_endpoint }}/api/vippools/?name={{ vast_storage_vip_pool_name }}"
-        method: GET
-        url_username: "{{ vast_username }}"
-        url_password: "{{ vast_password }}"
-        force_basic_auth: true
-        validate_certs: "{{ vast_storage_validate_certs }}"
-        timeout: "{{ vast_storage_api_timeout | int }}"
-        status_code: [200]
-      register: _vast_vip_pool_check
-      no_log: true
+      block:
+        - name: Send authenticated GET request for the conventional VIP pool
+          ansible.builtin.uri:
+            url: "https://{{ vast_endpoint }}/api/vippools/?name={{ vast_storage_vip_pool_name }}"
+            method: GET
+            url_username: "{{ vast_username }}"
+            url_password: "{{ vast_password }}"
+            force_basic_auth: true
+            validate_certs: "{{ vast_storage_validate_certs }}"
+            timeout: "{{ vast_storage_api_timeout | int }}"
+            status_code: [200]
+          register: _vast_vip_pool_check
+          no_log: true
+      rescue:
+        - name: Build sanitized diagnostics for failed VIP-pool lookup
+          ansible.builtin.set_fact:
+            _vast_vip_pool_lookup_diagnostics:
+              http_status: "{{ (_vast_vip_pool_check | default({})).status | default('no HTTP response', true) }}"
+              elapsed_seconds: "{{ (_vast_vip_pool_check | default({})).elapsed | default('unknown') }}"
+              failure_category: >-
+                {% set _lookup_result = _vast_vip_pool_check | default({}) %}
+                {% set _error_text = _lookup_result.msg | default('', true) | string | lower %}
+                {% if _lookup_result.status is defined %}http_response
+                {% elif 'ssl' in _error_text or 'certificate verify failed' in _error_text %}tls_error
+                {% elif 'timed out' in _error_text or 'timeout' in _error_text %}timeout
+                {% elif 'connection refused' in _error_text %}connection_refused
+                {% elif 'name or service not known' in _error_text
+                      or 'temporary failure in name resolution' in _error_text
+                      or 'nodename nor servname' in _error_text %}dns_resolution
+                {% else %}transport_or_other_error
+                {% endif %}
+              error_message: >-
+                {%- set _lookup_result = _vast_vip_pool_check | default({}) -%}
+                {%- set _error_text = _lookup_result.msg | default('No error details returned', true) | string -%}
+                {%- set _username = vast_username | default('') | string -%}
+                {%- set _password = vast_password | default('') | string -%}
+                {%- set _endpoint = vast_endpoint | default('') | string -%}
+                {%- set _vip_pool_name = vast_storage_vip_pool_name | default('') | string -%}
+                {%- if _username | length > 0 -%}
+                {%- set _error_text = _error_text | replace(_username, '[REDACTED]') -%}
+                {%- endif -%}
+                {%- if _password | length > 0 -%}
+                {%- set _error_text = _error_text | replace(_password, '[REDACTED]') -%}
+                {%- endif -%}
+                {%- if _username | length > 0 and _password | length > 0 -%}
+                {%- set _basic_auth = (_username ~ ':' ~ _password) | b64encode -%}
+                {%- set _error_text = _error_text | replace(_basic_auth, '[REDACTED]') -%}
+                {%- endif -%}
+                {%- if _endpoint | length > 0 -%}
+                {%- set _error_text = _error_text | replace(_endpoint, '[VAST_ENDPOINT]') -%}
+                {%- endif -%}
+                {%- if _vip_pool_name | length > 0 -%}
+                {%- set _error_text = _error_text | replace(_vip_pool_name, '[VIP_POOL]') -%}
+                {%- endif -%}
+                {{- _error_text
+                    | regex_replace('(?i)authorization\\s*[:=]\\s*(basic|bearer)\\s+\\S+', 'Authorization: [REDACTED]')
+                    | regex_replace('(?i)(password|passwd|token|secret)\\s*[:=]\\s*[^\\s,;]+', '[REDACTED]')
+                    | regex_replace('(?i)https?://[^/@\\s]+@', 'https://[REDACTED]@')
+                    | truncate(512, true, '...') -}}
+          no_log: true
+
+        - name: Emit sanitized diagnostics for failed VIP-pool lookup
+          ansible.builtin.debug:
+            msg: >-
+              VAST VIP-pool lookup diagnostic: HTTP status
+              {{ _vast_vip_pool_lookup_diagnostics.http_status }}, elapsed
+              {{ _vast_vip_pool_lookup_diagnostics.elapsed_seconds }} seconds,
+              category {{ _vast_vip_pool_lookup_diagnostics.failure_category }}.
+              Error: {{ _vast_vip_pool_lookup_diagnostics.error_message }}
+
+        - name: Fail with sanitized VIP-pool lookup summary
+          ansible.builtin.fail:
+            msg: >-
+              VAST VIP-pool lookup failed (HTTP status
+              {{ _vast_vip_pool_lookup_diagnostics.http_status }}, category
+              {{ _vast_vip_pool_lookup_diagnostics.failure_category }}).
 
     # Re-check the exact name client-side too: ?name= may match as a substring
     # on some VAST versions, and the filtered list is now small either way.
@@ -475,6 +545,7 @@
         _vast_vip_slice_start: ""
         _vast_vip_slice_end: ""
         _vast_vip_pool_result: {}
+        _vast_vip_pool_lookup_diagnostics: {}
       no_log: true
 
 - name: Set storage_provider_tenant_config output fact

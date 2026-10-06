@@ -20,6 +20,12 @@ data:
         deviceClasses:
           - name: vg1
             default: true
+            deviceSelector:
+              paths:
+                - /dev/loop10
+                - /dev/loop11
+                - /dev/loop12
+              forceWipeDevicesAndDestroyAllData: true
             thinPoolConfig:
               name: thin-pool-1
               sizePercent: 90

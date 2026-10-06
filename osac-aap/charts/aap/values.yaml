@@ -65,7 +65,8 @@ instanceGroups:
     secret: {}
   storageFulfillment:
     enabled: false
-    config: {}
+    config:
+      VALIDATE_CERTS: "true"
     secret: {}
   publishTemplates:
     enabled: false

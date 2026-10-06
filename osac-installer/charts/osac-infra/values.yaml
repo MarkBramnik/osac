@@ -88,7 +88,7 @@ kafka:
   enabled: false
   replicas: 3
   storage:
-    size: 100Gi
+    size: 10Gi
   version: "4.2.0"
   metadataVersion: "4.2-IV0"
 

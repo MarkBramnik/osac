@@ -1405,6 +1405,11 @@
                   "type": "object",
                   "description": "Environment variables for the storage-operations instance group",
                   "properties": {
+                    "VALIDATE_CERTS": {
+                      "type": "string",
+                      "description": "Whether Python/provider clients in the storage-operations instance group validate TLS certificates",
+                      "default": "true"
+                    },
                     "STORAGE_SNAPSHOTS_ENABLED": {
                       "type": "string",
                       "description": "Enable storage snapshots"

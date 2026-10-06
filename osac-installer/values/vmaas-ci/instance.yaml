@@ -174,12 +174,17 @@ aap:
     # the same base value here. Extending that override to cover eeImage
     # too is tracked separately (OSAC-3545), since it lives in
     # osac-test-infra, not this repo.
-    eeImage: "ghcr.io/osac-project/osac-aap:latest"
-    projectGitUri: "https://github.com/osac-project/osac"
-    projectGitBranch: "main"
+    #eeImage: "ghcr.io/osac-project/osac-aap:latest"
+    eeImage: "quay.io/rh-ee-mbramnik/ecosys-nvidia/osac-execution-environment:2.0"
+    #projectGitUri: "https://github.com/osac-project/osac"
+    #projectGitBranch: "main"
+    projectGitUri: "https://github.com/MarkBramnik/osac"
+    projectGitBranch: "mark/full-test"
   instanceGroups:
     storageFulfillment:
       enabled: true
+      config:
+        VALIDATE_CERTS: "false"
 
 # --- Validation ---
 validation:

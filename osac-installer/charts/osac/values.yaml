@@ -317,6 +317,7 @@ aap:
     storageFulfillment:
       enabled: false
       config:
+        VALIDATE_CERTS: "true"
         STORAGE_SNAPSHOTS_ENABLED: ""
       secret:
         VAST_ENDPOINT: ""
