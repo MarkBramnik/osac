@@ -228,6 +228,32 @@ func newTestStorageBackendGetResponse(provider string) *privatev1.StorageBackend
 	}.Build()
 }
 
+func configureTwoProviderReadinessClients(r *StorageReconciler, registeredBackendCount int32) {
+	r.TiersClient = &mockStorageTiersLister{
+		listFunc: func(context.Context, *privatev1.StorageTiersListRequest, ...grpc.CallOption) (*privatev1.StorageTiersListResponse, error) {
+			return privatev1.StorageTiersListResponse_builder{
+				Items: []*privatev1.StorageTier{
+					newTestStorageTier("local", "backend-lvms"),
+					newTestStorageTier("block", "backend-vast"),
+				},
+			}.Build(), nil
+		},
+	}
+	r.BackendsClient = &mockStorageBackendsClient{
+		listFunc: registeredBackendsClient(registeredBackendCount).listFunc,
+		getFunc: func(_ context.Context, in *privatev1.StorageBackendsGetRequest, _ ...grpc.CallOption) (*privatev1.StorageBackendsGetResponse, error) {
+			switch in.GetId() {
+			case "backend-lvms":
+				return newTestStorageBackendGetResponse("lvms"), nil
+			case "backend-vast":
+				return newTestStorageBackendGetResponse("vast"), nil
+			default:
+				return nil, status.Error(codes.NotFound, "not found")
+			}
+		},
+	}
+}
+
 func newClusterOrder(name, namespace string, annotations map[string]string) *v1alpha1.ClusterOrder {
 	return &v1alpha1.ClusterOrder{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1770,28 +1796,7 @@ var _ = Describe("Storage Controller", func() {
 				nil, nil, pollInterval,
 				provisioning.DefaultMaxJobHistory,
 			)
-			r.TiersClient = &mockStorageTiersLister{
-				listFunc: func(context.Context, *privatev1.StorageTiersListRequest, ...grpc.CallOption) (*privatev1.StorageTiersListResponse, error) {
-					return privatev1.StorageTiersListResponse_builder{
-						Items: []*privatev1.StorageTier{
-							newTestStorageTier("local", "backend-lvms"),
-							newTestStorageTier("block", "backend-vast"),
-						},
-					}.Build(), nil
-				},
-			}
-			r.BackendsClient = &mockStorageBackendsClient{
-				listFunc: registeredBackendsClient(0).listFunc,
-				getFunc: func(_ context.Context, in *privatev1.StorageBackendsGetRequest, _ ...grpc.CallOption) (*privatev1.StorageBackendsGetResponse, error) {
-					switch in.GetId() {
-					case "backend-lvms":
-						return newTestStorageBackendGetResponse("lvms"), nil
-					case "backend-vast":
-						return newTestStorageBackendGetResponse("vast"), nil
-					}
-					return nil, status.Error(codes.NotFound, "not found")
-				},
-			}
+			configureTwoProviderReadinessClients(r, 0)
 
 			nn := types.NamespacedName{Name: name, Namespace: testNamespace}
 			_, err := r.Reconcile(ctx, storageReconcileRequest(nn))
@@ -1804,12 +1809,53 @@ var _ = Describe("Storage Controller", func() {
 			Expect(backendCond).NotTo(BeNil())
 			Expect(backendCond.Status).To(Equal(metav1.ConditionFalse),
 				"should not be True when only some providers have hub Secrets")
+			Expect(backendCond.Reason).To(Equal(v1alpha1.TenantReasonNoProvider))
+			Expect(backendCond.Message).To(Equal("Hub Secret readiness by backend: ready (1): backend-lvms: lvms; not ready (1): backend-vast: vast; no storage backend registered"))
 			Expect(tenant.Status.StorageBackends).To(ConsistOf(
 				v1alpha1.StorageBackendStatus{
 					Name:     "backend-lvms",
 					Provider: "lvms",
 					Ready:    true,
 					Message:  fmt.Sprintf("Hub Secret for tenant %q exists", name),
+				},
+				v1alpha1.StorageBackendStatus{
+					Name:     "backend-vast",
+					Provider: "vast",
+					Ready:    false,
+					Message:  fmt.Sprintf("Hub Secret for tenant %q not found", name),
+				},
+			))
+		})
+
+		It("should explicitly report when no backend Hub Secrets are ready", func() {
+			name := "storage-test-no-provider-secrets"
+			createReadyTenantForStorage(ctx, name, testNamespace)
+
+			r := NewStorageReconciler(
+				testMcManager, testNamespace, mcmanager.LocalCluster,
+				nil, nil, pollInterval,
+				provisioning.DefaultMaxJobHistory,
+			)
+			configureTwoProviderReadinessClients(r, 0)
+
+			nn := types.NamespacedName{Name: name, Namespace: testNamespace}
+			_, err := r.Reconcile(ctx, storageReconcileRequest(nn))
+			Expect(err).NotTo(HaveOccurred())
+
+			tenant := &v1alpha1.Tenant{}
+			Expect(k8sClient.Get(ctx, nn, tenant)).To(Succeed())
+
+			backendCond := tenant.GetStatusCondition(v1alpha1.TenantConditionStorageBackendReady)
+			Expect(backendCond).NotTo(BeNil())
+			Expect(backendCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(backendCond.Reason).To(Equal(v1alpha1.TenantReasonNoProvider))
+			Expect(backendCond.Message).To(Equal("Hub Secret readiness by backend: ready (0): none; not ready (2): backend-lvms: lvms, backend-vast: vast; no backend Hub Secrets are ready; no storage backend registered"))
+			Expect(tenant.Status.StorageBackends).To(ConsistOf(
+				v1alpha1.StorageBackendStatus{
+					Name:     "backend-lvms",
+					Provider: "lvms",
+					Ready:    false,
+					Message:  fmt.Sprintf("Hub Secret for tenant %q not found", name),
 				},
 				v1alpha1.StorageBackendStatus{
 					Name:     "backend-vast",
@@ -1847,27 +1893,7 @@ var _ = Describe("Storage Controller", func() {
 				nil, nil, pollInterval,
 				provisioning.DefaultMaxJobHistory,
 			)
-			r.TiersClient = &mockStorageTiersLister{
-				listFunc: func(context.Context, *privatev1.StorageTiersListRequest, ...grpc.CallOption) (*privatev1.StorageTiersListResponse, error) {
-					return privatev1.StorageTiersListResponse_builder{
-						Items: []*privatev1.StorageTier{
-							newTestStorageTier("local", "backend-lvms"),
-							newTestStorageTier("block", "backend-vast"),
-						},
-					}.Build(), nil
-				},
-			}
-			r.BackendsClient = &mockStorageBackendsClient{
-				getFunc: func(_ context.Context, in *privatev1.StorageBackendsGetRequest, _ ...grpc.CallOption) (*privatev1.StorageBackendsGetResponse, error) {
-					switch in.GetId() {
-					case "backend-lvms":
-						return newTestStorageBackendGetResponse("lvms"), nil
-					case "backend-vast":
-						return newTestStorageBackendGetResponse("vast"), nil
-					}
-					return nil, status.Error(codes.NotFound, "not found")
-				},
-			}
+			configureTwoProviderReadinessClients(r, 0)
 
 			nn := types.NamespacedName{Name: name, Namespace: testNamespace}
 			_, err := r.Reconcile(ctx, storageReconcileRequest(nn))
@@ -1880,6 +1906,8 @@ var _ = Describe("Storage Controller", func() {
 			Expect(backendCond).NotTo(BeNil())
 			Expect(backendCond.Status).To(Equal(metav1.ConditionTrue),
 				"should be True when all providers have hub Secrets")
+			Expect(backendCond.Reason).To(Equal(v1alpha1.TenantReasonFound))
+			Expect(backendCond.Message).To(Equal("Hub Secret readiness by backend: ready (2): backend-lvms: lvms, backend-vast: vast; not ready (0): none"))
 			Expect(tenant.Status.StorageBackends).To(ConsistOf(
 				v1alpha1.StorageBackendStatus{
 					Name:     "backend-lvms",
@@ -1919,6 +1947,8 @@ var _ = Describe("Storage Controller", func() {
 			Expect(backendCond).NotTo(BeNil())
 			Expect(backendCond.Status).To(Equal(metav1.ConditionTrue),
 				"should be True when any hub Secret exists and no tier definitions are available (backward compat)")
+			Expect(backendCond.Reason).To(Equal(v1alpha1.TenantReasonFound))
+			Expect(backendCond.Message).To(Equal("No storage backend entries are available to evaluate (ready: 0; not ready: 0); legacy tenant-wide Hub Secret check: found a Secret"))
 		})
 	})
 
@@ -2351,7 +2381,7 @@ var _ = Describe("Storage Controller", func() {
 			Expect(backendCond).NotTo(BeNil())
 			Expect(backendCond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(backendCond.Reason).To(Equal(v1alpha1.TenantReasonNoProvider))
-			Expect(backendCond.Message).To(ContainSubstring("No fulfillment service connection configured"))
+			Expect(backendCond.Message).To(Equal("No storage backend entries are available to evaluate (ready: 0; not ready: 0); legacy tenant-wide Hub Secret check: no Secret found; no fulfillment service connection configured; storage backend status unknown"))
 			// Falls through to Stage 2: tenant-specific SC resolved, no AAP job triggered
 			Expect(tenant.Status.StorageClasses).NotTo(BeEmpty())
 			Expect(tenant.Status.StorageBackendJobs).To(BeEmpty())
@@ -2380,7 +2410,7 @@ var _ = Describe("Storage Controller", func() {
 			Expect(backendCond).NotTo(BeNil())
 			Expect(backendCond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(backendCond.Reason).To(Equal(v1alpha1.TenantReasonNoProvider))
-			Expect(backendCond.Message).To(ContainSubstring("No storage backend registered"))
+			Expect(backendCond.Message).To(Equal("No storage backend entries are available to evaluate (ready: 0; not ready: 0); legacy tenant-wide Hub Secret check: no Secret found; no storage backend registered"))
 			Expect(tenant.Status.StorageClasses).NotTo(BeEmpty())
 			Expect(tenant.Status.StorageBackendJobs).To(BeEmpty())
 		})
@@ -2408,6 +2438,7 @@ var _ = Describe("Storage Controller", func() {
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(v1alpha1.TenantReasonBackendConfiguredNoProvider))
+			Expect(cond.Message).To(Equal("No storage backend entries are available to evaluate (ready: 0; not ready: 0); legacy tenant-wide Hub Secret check: no Secret found; storage backend is registered but no AAP is configured to provision the hub Secret for tenant \"storage-test-backend-no-aap\""))
 			Expect(tenant.Status.StorageBackendJobs).To(BeEmpty())
 		})
 

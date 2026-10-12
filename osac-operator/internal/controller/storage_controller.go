@@ -255,12 +255,13 @@ func (r *StorageReconciler) handleBackendReadiness(ctx context.Context, instance
 	}
 	instance.Status.StorageBackends = statuses
 	hubSecretReady = allReady
+	readinessMessage := formatStorageBackendReadinessMessage(statuses, hubSecretReady)
 
 	if hubSecretReady {
 		instance.SetStatusCondition(v1alpha1.TenantConditionStorageBackendReady,
 			metav1.ConditionTrue,
 			v1alpha1.TenantReasonFound,
-			fmt.Sprintf("Hub Secret for tenant %q exists", tenantName))
+			readinessMessage)
 		return true, ctrl.Result{}, false, nil
 	}
 
@@ -277,7 +278,7 @@ func (r *StorageReconciler) handleBackendReadiness(ctx context.Context, instance
 		instance.SetStatusCondition(v1alpha1.TenantConditionStorageBackendReady,
 			metav1.ConditionFalse,
 			v1alpha1.TenantReasonNotFound,
-			fmt.Sprintf("Hub Secret for tenant %q not found", tenantName))
+			fmt.Sprintf("%s; Hub Secret for tenant %q not found", readinessMessage, tenantName))
 		provResult, provErr := r.handleBackendProvisioning(ctx, instance)
 		return false, provResult, true, provErr
 	case backendRegistered:
@@ -285,7 +286,7 @@ func (r *StorageReconciler) handleBackendReadiness(ctx context.Context, instance
 		instance.SetStatusCondition(v1alpha1.TenantConditionStorageBackendReady,
 			metav1.ConditionFalse,
 			v1alpha1.TenantReasonBackendConfiguredNoProvider,
-			fmt.Sprintf("Storage backend is registered but no AAP is configured to provision the hub Secret for tenant %q", tenantName))
+			fmt.Sprintf("%s; storage backend is registered but no AAP is configured to provision the hub Secret for tenant %q", readinessMessage, tenantName))
 		return false, ctrl.Result{}, true, nil
 	default:
 		// Fall through to Stage 2 so the controller resolves StorageClasses from
@@ -297,13 +298,13 @@ func (r *StorageReconciler) handleBackendReadiness(ctx context.Context, instance
 			instance.SetStatusCondition(v1alpha1.TenantConditionStorageBackendReady,
 				metav1.ConditionFalse,
 				v1alpha1.TenantReasonNoProvider,
-				"No fulfillment service connection configured; storage backend status unknown")
+				readinessMessage+"; no fulfillment service connection configured; storage backend status unknown")
 		} else {
 			// Connected to fulfillment service but no backend is registered yet.
 			instance.SetStatusCondition(v1alpha1.TenantConditionStorageBackendReady,
 				metav1.ConditionFalse,
 				v1alpha1.TenantReasonNoProvider,
-				"No storage backend registered")
+				readinessMessage+"; no storage backend registered")
 		}
 		return false, ctrl.Result{}, false, nil
 	}
@@ -1023,6 +1024,44 @@ func (r *StorageReconciler) storageBackendStatuses(ctx context.Context, tenantNa
 	}
 
 	return statuses, allReady, nil
+}
+
+func formatStorageBackendReadinessMessage(statuses []v1alpha1.StorageBackendStatus, legacyHubSecretReady bool) string {
+	if len(statuses) == 0 {
+		fallbackResult := "no Secret found"
+		if legacyHubSecretReady {
+			fallbackResult = "found a Secret"
+		}
+		return fmt.Sprintf("No storage backend entries are available to evaluate (ready: 0; not ready: 0); legacy tenant-wide Hub Secret check: %s", fallbackResult)
+	}
+
+	ready := make([]string, 0, len(statuses))
+	notReady := make([]string, 0, len(statuses))
+	for _, backend := range statuses {
+		backendAndProvider := fmt.Sprintf("%s: %s", backend.Name, backend.Provider)
+		if backend.Ready {
+			ready = append(ready, backendAndProvider)
+		} else {
+			notReady = append(notReady, backendAndProvider)
+		}
+	}
+	sort.Strings(ready)
+	sort.Strings(notReady)
+
+	readyNames := "none"
+	if len(ready) > 0 {
+		readyNames = strings.Join(ready, ", ")
+	}
+	notReadyNames := "none"
+	if len(notReady) > 0 {
+		notReadyNames = strings.Join(notReady, ", ")
+	}
+
+	message := fmt.Sprintf("Hub Secret readiness by backend: ready (%d): %s; not ready (%d): %s", len(ready), readyNames, len(notReady), notReadyNames)
+	if len(ready) == 0 {
+		message += "; no backend Hub Secrets are ready"
+	}
+	return message
 }
 
 func (r *StorageReconciler) hubSecretsByProvider(ctx context.Context, tenantName string) (map[string]bool, bool, error) {
