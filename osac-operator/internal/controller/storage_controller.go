@@ -202,6 +202,8 @@ func (r *StorageReconciler) Reconcile(ctx context.Context, req mcreconcile.Reque
 	return res, err
 }
 
+// patchTenantStorageStatus persists computed storage fields from a fresh read so
+// concurrent status fields owned by other controllers are preserved.
 func (r *StorageReconciler) patchTenantStorageStatus(ctx context.Context, key client.ObjectKey, computed v1alpha1.TenantStatus) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		latest := &v1alpha1.Tenant{}
@@ -310,6 +312,8 @@ func (r *StorageReconciler) handleBackendReadiness(ctx context.Context, instance
 	}
 }
 
+// handleUpdate reconciles Tenant storage readiness and provisioning across the
+// VMaaS target cluster and any CaaS ClusterOrders owned by the Tenant.
 func (r *StorageReconciler) handleUpdate(ctx context.Context, instance *v1alpha1.Tenant) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 	tenantName := instance.GetName()
@@ -650,6 +654,8 @@ func (r *StorageReconciler) buildClientFromKubeconfig(kubeconfig []byte) (client
 	return c, nil
 }
 
+// updateTenantVMaaSStorage upserts the VMaaS target-cluster status while
+// preserving status entries for other clusters.
 func (r *StorageReconciler) updateTenantVMaaSStorage(tenant *v1alpha1.Tenant, clusterName string, ready bool, reason string) {
 	r.upsertTenantClusterStorage(tenant, clusterName, ready, reason)
 }
@@ -669,6 +675,8 @@ func (r *StorageReconciler) updateTenantClusterStorage(tenant *v1alpha1.Tenant, 
 	r.upsertTenantClusterStorage(tenant, clusterName, ready, reason)
 }
 
+// upsertTenantClusterStorage updates the status entry for clusterName or appends
+// one when that cluster is not yet represented.
 func (r *StorageReconciler) upsertTenantClusterStorage(tenant *v1alpha1.Tenant, clusterName string, ready bool, reason string) {
 	for i, cs := range tenant.Status.ClusterStorage {
 		if cs.ClusterName == clusterName {
@@ -1026,6 +1034,8 @@ func (r *StorageReconciler) storageBackendStatuses(ctx context.Context, tenantNa
 	return statuses, allReady, nil
 }
 
+// formatStorageBackendReadinessMessage summarizes backend readiness, falling
+// back to the legacy tenant-wide Secret result when backend details are absent.
 func formatStorageBackendReadinessMessage(statuses []v1alpha1.StorageBackendStatus, legacyHubSecretReady bool) string {
 	if len(statuses) == 0 {
 		fallbackResult := "no Secret found"
@@ -1064,6 +1074,8 @@ func formatStorageBackendReadinessMessage(statuses []v1alpha1.StorageBackendStat
 	return message
 }
 
+// hubSecretsByProvider lists a tenant's Hub Secrets and reports readiness by
+// provider together with whether any matching Secret exists.
 func (r *StorageReconciler) hubSecretsByProvider(ctx context.Context, tenantName string) (map[string]bool, bool, error) {
 	labels := map[string]string{osacTenantKey: tenantName}
 	var secretList corev1.SecretList

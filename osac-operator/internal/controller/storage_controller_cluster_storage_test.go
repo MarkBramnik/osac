@@ -26,6 +26,8 @@ import (
 	"github.com/osac-project/osac/osac-operator/api/v1alpha1"
 )
 
+// TestUpdateTenantClusterStoragePreservesVMaaSEntry verifies CaaS status updates
+// preserve the VMaaS target entry when it was added first.
 func TestUpdateTenantClusterStoragePreservesVMaaSEntry(t *testing.T) {
 	reconciler := &StorageReconciler{}
 	tenant := &v1alpha1.Tenant{}
@@ -52,6 +54,8 @@ func TestUpdateTenantClusterStoragePreservesVMaaSEntry(t *testing.T) {
 	}
 }
 
+// TestUpdateTenantClusterStorageSupportsMultipleCaaSClusters verifies distinct
+// CaaS entries coexist and a later update changes only the matching entry.
 func TestUpdateTenantClusterStorageSupportsMultipleCaaSClusters(t *testing.T) {
 	reconciler := &StorageReconciler{}
 	tenant := &v1alpha1.Tenant{}
@@ -93,6 +97,8 @@ func TestUpdateTenantClusterStorageSupportsMultipleCaaSClusters(t *testing.T) {
 	}
 }
 
+// clusterOrderWithStorageReady creates a ClusterOrder with the requested
+// cluster-storage readiness condition for slice-upsert tests.
 func clusterOrderWithStorageReady(name string, status metav1.ConditionStatus, reason string) *v1alpha1.ClusterOrder {
 	return &v1alpha1.ClusterOrder{
 		ObjectMeta: metav1.ObjectMeta{Name: name},

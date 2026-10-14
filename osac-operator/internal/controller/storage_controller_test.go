@@ -228,6 +228,8 @@ func newTestStorageBackendGetResponse(provider string) *privatev1.StorageBackend
 	}.Build()
 }
 
+// configureTwoProviderReadinessClients wires tier and backend API responses for
+// readiness tests that exercise two registered storage providers.
 func configureTwoProviderReadinessClients(r *StorageReconciler, registeredBackendCount int32) {
 	r.TiersClient = &mockStorageTiersLister{
 		listFunc: func(context.Context, *privatev1.StorageTiersListRequest, ...grpc.CallOption) (*privatev1.StorageTiersListResponse, error) {

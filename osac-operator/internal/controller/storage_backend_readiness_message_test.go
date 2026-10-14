@@ -22,6 +22,8 @@ import (
 	"github.com/osac-project/osac/osac-operator/api/v1alpha1"
 )
 
+// TestFormatStorageBackendReadinessMessage covers sorted readiness summaries and
+// the legacy fallback used when backend details are unavailable.
 func TestFormatStorageBackendReadinessMessage(t *testing.T) {
 	tests := []struct {
 		name                 string
