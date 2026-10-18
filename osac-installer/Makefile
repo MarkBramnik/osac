@@ -660,6 +660,10 @@ fulfillment-auth-test: ## Check Fulfillment service-account token exchange behav
 dev-full-render-test: helm-deps helm-topolvm-deps ## Check dev-full TLS and Helm post-rendering
 	./scripts/test-dev-full-render.sh
 
+.PHONY: certificate-validation-render-test
+certificate-validation-render-test: ## Check storage Ansible certificate-validation values and AAP/AWX propagation
+	./scripts/test-certificate-validation-render.sh
+
 .PHONY: openbao-security-context-test
 openbao-security-context-test: helm-topolvm-deps ## Check OpenBao securityContext renders numeric UID on Kind, omits on OpenShift
 	./scripts/test-openbao-security-context.sh
@@ -669,7 +673,7 @@ kind-runtime-test: ## Check Kind runtime, sudo, image loading, and cluster clean
 	python3 scripts/test-kind-runtime.py
 
 .PHONY: helm-validate
-helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test mce-render-test dev-full-render-test openbao-security-context-test ## Validate all charts (lint + template)
+helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test mce-render-test dev-full-render-test openbao-security-context-test certificate-validation-render-test ## Validate all charts (lint + template)
 	@for d in values/*/; do \
 		infra="$${d}infra.yaml"; \
 		[ -f "$$infra" ] && echo "Validating $$infra..." && \
