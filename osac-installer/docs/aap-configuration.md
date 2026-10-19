@@ -40,7 +40,9 @@ file and they are applied during `make install-osac`.
 Storage-workflow TLS certificate validation is enabled by default. Configure
 `aap.instanceGroups.storageFulfillment.enable_certificate_validation: false`
 only for development environments using self-signed provider certificates. The
-same value is injected into AWX jobs in the `dev-full` profile.
+same value is injected into AWX's dedicated storage container group in the
+`dev-full` profile. ComputeInstance JIT storage receives it through a
+storage-provider-scoped input.
 
 ## Secret Variables
 

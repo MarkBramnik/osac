@@ -103,9 +103,12 @@ default cluster context. ClusterOrder storage continues to use the per-job
 `admin_kubeconfig`.
 
 The installer sets `ENABLE_CERTIFICATE_VALIDATION` from
-`aap.instanceGroups.storageFulfillment.enable_certificate_validation` for
-storage-workflow Ansible clients. The secure default is `true`; set it to
+`aap.instanceGroups.storageFulfillment.enable_certificate_validation` in the
+storage instance-group ConfigMap. The secure default is `true`; set it to
 `false` only for development systems using self-signed provider certificates.
+AWX storage jobs use a dedicated container group that reads the same ConfigMap.
+ComputeInstance JIT storage receives the policy as an explicit storage-provider
+input because it runs in a compute-instance job, not the storage container group.
 
 ## Deploy a local AAP installation using CRC
 

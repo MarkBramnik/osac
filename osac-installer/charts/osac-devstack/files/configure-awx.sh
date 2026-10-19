@@ -11,6 +11,8 @@
 
 set -euo pipefail
 
+source /scripts/awx-storage-instance-group.sh
+
 NS="${1:-${NS:-osac}}"
 OSAC_EE_IMAGE="${OSAC_EE_IMAGE:-ghcr.io/osac-project/osac-aap:latest}"
 OSAC_EE_PULL="${OSAC_EE_PULL:-missing}"
@@ -165,7 +167,7 @@ configure_awx() {
 
   # Disable project collection/role sync: OSAC's collections are installed in
   # its dedicated execution environment from osac-aap/collections/requirements.yml.
-  # Set OSAC job environment variables while preserving unrelated AWX settings.
+  # Set global OSAC runtime settings while keeping storage TLS policy scoped.
   # Local AWX workers may lack a service-account namespace file. Use the
   # release namespace for storage config Secrets through the supported override.
   local jobs_settings settings_payload
@@ -178,17 +180,18 @@ settings = json.loads(sys.argv[1])
 task_env = settings.get("AWX_TASK_ENV") or {}
 if not isinstance(task_env, dict):
     raise SystemExit("AWX_TASK_ENV must be a JSON object")
+task_env.pop("ENABLE_CERTIFICATE_VALIDATION", None)
+task_env.pop("VAST_VALIDATE_CERTS", None)
 task_env.update({
     "ANSIBLE_JINJA2_NATIVE": "true",
     "OSAC_STORAGE_CONFIG_NAMESPACE": sys.argv[2],
-    "ENABLE_CERTIFICATE_VALIDATION": sys.argv[3],
 })
 print(json.dumps({
     "AWX_COLLECTIONS_ENABLED": False,
     "AWX_ROLES_ENABLED": False,
     "AWX_TASK_ENV": task_env,
 }))
-' "${jobs_settings}" "${NS}" "${ENABLE_CERTIFICATE_VALIDATION:-true}")
+' "${jobs_settings}" "${NS}")
   curl -fsS -X PATCH "${api}/settings/jobs/" -H "Authorization: Bearer ${awx_token}" \
     -H "Content-Type: application/json" \
     -d "${settings_payload}" >/dev/null
@@ -282,6 +285,15 @@ print(json.dumps({
     if [[ -n "${workflow_status:-}" ]]; then
       extra_vars="workflow_status: ${workflow_status}"
     fi
+    if [[ "${name}" == "osac-create-compute-instance" ]]; then
+      extra_vars=$(python3 -c '
+import json
+import sys
+
+enabled = sys.argv[1].strip().lower() not in ["false", "0", "no", "off"]
+print(json.dumps({"osac_storage_provider_certificate_validation": enabled}))
+' "${ENABLE_CERTIFICATE_VALIDATION:-true}")
+    fi
     ensure_job_template "${name}" "${playbook}" "${inventory_id}" "${extra_vars}"
   done <<< "${template_specs}"
   log "All 35 production OSAC job templates configured"
@@ -317,6 +329,21 @@ print(json.dumps({
       -H "Content-Type: application/json" -d "{\"id\": ${cred_id}}" >/dev/null
   done
   log "Credential ${cred_id} attached to all templates"
+
+  # Storage jobs use a container group that receives only the storage IG data.
+  # ComputeInstance JIT storage receives the policy through its role-scoped extra var.
+  local storage_group_id storage_template
+  storage_group_id=$(osac_ensure_storage_instance_group \
+    "${api}" "${awx_token}" "${cred_id}" "${NS}" "${OSAC_EE_IMAGE}" "${OSAC_EE_PULL}")
+  for storage_template in \
+    osac-create-tenant-storage-backend \
+    osac-delete-tenant-storage-backend \
+    osac-create-tenant-cluster-storage \
+    osac-delete-tenant-cluster-storage; do
+    osac_assign_storage_instance_group \
+      "${api}" "${awx_token}" "${storage_template}" "${storage_group_id}"
+  done
+  log "Storage templates assigned to osac-storage-operations-ig"
 
   # Store AWX token as secret for osac-operator.
   kubectl -n "${NS}" create secret generic awx-token \

@@ -83,6 +83,7 @@
         storage_provider_backend_connections: "{{ osac_job_vars.storage_backend_connections | default({}) }}"
         storage_provider_provisioning_target: vmaas
         storage_provider_block_encryption_passphrase: "{{ osac_job_vars.resource.spec.blockEncryptionPassphrase | default('') }}"
+        storage_provider_certificate_validation: "{{ osac_storage_provider_certificate_validation | default(omit) }}"
 
     - name: Add JIT-provisioned StorageClasses to resolution list
       ansible.builtin.set_fact:

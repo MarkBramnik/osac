@@ -67,6 +67,8 @@
       vars:
         _provider_tiers: "{{ _computed_provider_tiers }}"
         _provider_backend_connections: "{{ _computed_provider_backend_connections }}"
+        vast_storage_certificate_validation_override: >-
+          {{ storage_provider_certificate_validation | default(none) }}
 
 - name: "Accumulate tenant config after dispatch (setup only)"
   ansible.builtin.set_fact:

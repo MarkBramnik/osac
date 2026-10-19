@@ -13,19 +13,24 @@ ROLE_ROOT = (
 )
 
 
-def resolve_certificate_validation():
+def resolve_certificate_validation(variables=None):
     """Render the storage role's shared TLS policy from the environment."""
     defaults = yaml.safe_load((ROLE_ROOT / "defaults/main.yaml").read_text())
-    templar = Templar(loader=DataLoader(), variables={})
+    templar = Templar(loader=DataLoader(), variables=variables or {})
     return templar.template(defaults["enable_certificate_validation"])
 
 
-def resolve_storage_role_validation():
+def resolve_storage_role_validation(variables=None):
     """Render the role alias consumed by its VAST HTTP clients."""
     defaults = yaml.safe_load((ROLE_ROOT / "defaults/main.yaml").read_text())
+    template_variables = dict(variables or {})
+    template_variables.setdefault(
+        "enable_certificate_validation",
+        resolve_certificate_validation(template_variables),
+    )
     templar = Templar(
         loader=DataLoader(),
-        variables={"enable_certificate_validation": resolve_certificate_validation()},
+        variables=template_variables,
     )
     return templar.template(defaults["vast_storage_validate_certs"])
 
@@ -59,6 +64,15 @@ def test_certificate_validation_uses_runtime_environment(monkeypatch):
     assert resolve_storage_role_validation() is False
 
 
+def test_storage_provider_scoped_override_precedes_worker_environment(monkeypatch):
+    """Let JIT storage policy override the compute worker's environment."""
+    monkeypatch.setenv("ENABLE_CERTIFICATE_VALIDATION", "true")
+    variables = {"vast_storage_certificate_validation_override": False}
+
+    assert resolve_certificate_validation(variables) is False
+    assert resolve_storage_role_validation(variables) is False
+
+
 def test_unrecognized_certificate_validation_value_keeps_secure_default(monkeypatch):
     """Treat unrecognized setting values as enabled to preserve the secure default."""
     monkeypatch.setenv("ENABLE_CERTIFICATE_VALIDATION", "unexpected")
@@ -80,6 +94,24 @@ def test_storage_role_alias_uses_the_shared_setting():
     defaults = yaml.safe_load((ROLE_ROOT / "defaults/main.yaml").read_text())
 
     assert defaults["vast_storage_validate_certs"] == "{{ enable_certificate_validation }}"
+
+
+def test_compute_jit_passes_the_storage_provider_tls_override():
+    """Keep the AWX compute JIT policy scoped to its storage-provider call."""
+    playbook = yaml.safe_load(
+        (AAP_ROOT / "playbook_osac_create_compute_instance.yml").read_text()
+    )
+    jit_tasks = [
+        task
+        for play in playbook
+        for task in play.get("pre_tasks", [])
+        if task.get("name") == "Ensure storage is provisioned for tenant (JIT)"
+    ]
+
+    assert len(jit_tasks) == 1
+    assert jit_tasks[0]["vars"]["storage_provider_certificate_validation"] == (
+        "{{ osac_storage_provider_certificate_validation | default(omit) }}"
+    )
 
 
 def test_storage_http_clients_use_the_shared_validation_setting():

@@ -28,6 +28,10 @@ if [[ "$(grep -Fc 'ENABLE_CERTIFICATE_VALIDATION:' <<<"${override_render}")" -ne
   exit 1
 fi
 
+disabled_group_render=$(helm template aap "${aap_chart}" \
+  --set instanceGroups.storageFulfillment.enable_certificate_validation=false)
+assert_storage_config_value "${disabled_group_render}" false
+
 tmpdir=$(mktemp -d)
 trap 'rm -rf "${tmpdir}"' EXIT
 
@@ -113,22 +117,40 @@ if ! grep -Fq 'name: ENABLE_CERTIFICATE_VALIDATION' <<<"${devstack_profile_rende
 fi
 
 devstack_render=$(helm template test "${devstack_chart}" --namespace osac)
-rendered_script=$(awk '
+rendered_awx_script=$(awk '
   $0 == "  configure-awx.sh: |" { in_script = 1; next }
   in_script && /^  [^ ]/ { exit }
   in_script { sub(/^    /, ""); print }
 ' <<<"${devstack_render}")
-if ! grep -Fq 'settings.get("AWX_TASK_ENV") or {}' <<<"${rendered_script}" \
-  || ! grep -Fq '"ENABLE_CERTIFICATE_VALIDATION": sys.argv[3]' <<<"${rendered_script}"; then
-  echo "AWX configuration must preserve existing task environment and apply the storage TLS setting" >&2
+if ! grep -Fq 'task_env.pop("ENABLE_CERTIFICATE_VALIDATION", None)' <<<"${rendered_awx_script}" \
+  || ! grep -Fq 'task_env.pop("VAST_VALIDATE_CERTS", None)' <<<"${rendered_awx_script}" \
+  || ! grep -Fq 'osac_ensure_storage_instance_group' <<<"${rendered_awx_script}" \
+  || ! grep -Fq 'osac_storage_provider_certificate_validation' <<<"${rendered_awx_script}" \
+  || ! grep -Fq 'osac-create-tenant-storage-backend' <<<"${rendered_awx_script}"; then
+  echo "AWX must scope TLS validation to storage jobs and pass the JIT override" >&2
   exit 1
 fi
-bash -n <<<"${rendered_script}"
-if ! grep -Fq '"ENABLE_CERTIFICATE_VALIDATION": os.environ["ENABLE_CERTIFICATE_VALIDATION"]' \
-  scripts/dev-full/install-awx.sh; then
-  echo "the direct dev-full AWX installer must also pass its optional TLS setting" >&2
+rendered_storage_group_script=$(awk '
+  $0 == "  awx-storage-instance-group.sh: |" { in_script = 1; next }
+  in_script && /^  [^ ]/ { exit }
+  in_script { sub(/^    /, ""); print }
+' <<<"${devstack_render}")
+if ! grep -Fq '"name": "storage-operations-ig"' <<<"${rendered_storage_group_script}" \
+  || ! grep -Fq 'group_name="osac-storage-operations-ig"' <<<"${rendered_storage_group_script}" \
+  || ! grep -Fq '"configMapRef"' <<<"${rendered_storage_group_script}"; then
+  echo "AWX storage container group must load the storage-operations-ig data" >&2
+  exit 1
+fi
+bash -n <<<"${rendered_awx_script}"
+bash -n <<<"${rendered_storage_group_script}"
+if ! grep -Fq 'osac_storage_provider_certificate_validation' \
+  scripts/dev-full/install-awx.sh \
+  || ! grep -Fq 'osac_ensure_storage_instance_group' scripts/dev-full/install-awx.sh \
+  || ! grep -Fq 'task_env.pop("ENABLE_CERTIFICATE_VALIDATION", None)' scripts/dev-full/install-awx.sh; then
+  echo "the direct dev-full AWX installer must preserve the JIT storage TLS input" >&2
   exit 1
 fi
 bash -n scripts/dev-full/install-awx.sh
+bash -n charts/osac-devstack/files/awx-storage-instance-group.sh
 
 echo "Certificate-validation Helm values rendered with secure defaults and dev overrides."

@@ -13,6 +13,8 @@ data:
 {{ .Files.Get "files/install-virt.sh" | indent 4 }}
   configure-awx.sh: |
 {{ .Files.Get "files/configure-awx.sh" | indent 4 }}
+  awx-storage-instance-group.sh: |
+{{ .Files.Get "files/awx-storage-instance-group.sh" | indent 4 }}
   seed-catalog-simple.sh: |
 {{ .Files.Get "files/seed-catalog-simple.sh" | indent 4 }}
   provision-tenant.sh: |

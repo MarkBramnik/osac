@@ -36,6 +36,14 @@ argument_specs:
           without touching backend resources or hub Secret. teardown_backend
           removes backend resources (VAST tenant, views, quotas) and hub
           Secret without touching cluster-side K8s resources.
+      storage_provider_certificate_validation:
+        type: bool
+        required: false
+        description: >
+          Optional provider API TLS verification override. When omitted,
+          provider roles use their execution environment policy. Used by
+          ComputeInstance JIT storage to pass the deployment's setting only
+          to the storage-provider operation.
       storage_provider_block_encryption_passphrase:
         type: str
         required: false

@@ -26,8 +26,12 @@ vast_storage_config_namespace: >-
 # VAST_VALIDATE_CERTS variable remains a fallback for manually managed groups;
 # installer-managed groups set ENABLE_CERTIFICATE_VALIDATION.
 enable_certificate_validation: >-
-  {{ (lookup('env', 'ENABLE_CERTIFICATE_VALIDATION',
-             default=lookup('env', 'VAST_VALIDATE_CERTS', default='true')) | lower)
+  {{ ((vast_storage_certificate_validation_override
+       if vast_storage_certificate_validation_override is defined
+          and vast_storage_certificate_validation_override is not none
+       else lookup('env', 'ENABLE_CERTIFICATE_VALIDATION',
+                   default=lookup('env', 'VAST_VALIDATE_CERTS', default='true')))
+      | string | lower)
      not in ['false', '0', 'no', 'off'] }}
 vast_storage_validate_certs: "{{ enable_certificate_validation }}"
 

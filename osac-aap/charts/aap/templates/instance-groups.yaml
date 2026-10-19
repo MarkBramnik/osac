@@ -219,7 +219,8 @@ metadata:
   labels:
     {{- include "osac-aap.labels" . | nindent 4 }}
     osac.openshift.io/project: osac-aap
-data: {}
+data:
+  ENABLE_CERTIFICATE_VALIDATION: {{ printf "%t" .Values.instanceGroups.storageFulfillment.enable_certificate_validation | quote }}
 ---
 apiVersion: v1
 kind: Secret
