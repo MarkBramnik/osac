@@ -85,6 +85,7 @@ helm-lint: ## Lint Helm charts.
 helm-validate: helm-lint ## Lint and template-render Helm charts.
 	helm template osac-operator-crds charts/operator-crds/
 	helm template osac-operator charts/operator/
+	python3 hack/test-remote-debug-render.py
 
 # Run integration tests against a pre-existing Kind cluster deployed via
 # the root Makefile's `make dev-env` + `make integration-test-operator`.
@@ -189,12 +190,10 @@ kind-load: image-build
 PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 .PHONY: docker-buildx
 docker-buildx: ## Build and push container image for cross-platform support
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' $(CONTAINERFILE) > $(CONTAINERFILE).cross
 	- $(CONTAINER_TOOL) buildx create --name osac-operator-builder
 	$(CONTAINER_TOOL) buildx use osac-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f $(CONTAINERFILE).cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f $(CONTAINERFILE) ..
 	- $(CONTAINER_TOOL) buildx rm osac-operator-builder
-	rm $(CONTAINERFILE).cross
 
 .PHONY: build-installer
 build-installer: manifests generate ## Generate a consolidated YAML with CRDs and deployment.
@@ -243,6 +242,7 @@ ENVTEST_VERSION ?= release-0.19
 
 include $(shell git rev-parse --show-toplevel)/tools/golangci-lint.mk
 include $(shell git rev-parse --show-toplevel)/osac-installer/scripts/dev-full/kind-load-image.mk
+include make/remote-debug.mk
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.

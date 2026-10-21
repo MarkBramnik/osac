@@ -674,6 +674,81 @@
           "description": "Helm-injected global values (passed automatically to subcharts)"
         }
       },
+      "patternProperties": {
+        "^debug$": {
+          "type": "object",
+          "description": "Developer-only OSAC Operator remote-debug settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "continue": {
+              "type": "boolean",
+              "default": true
+            },
+            "fsGroup": {
+              "default": "auto",
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "string",
+                  "const": "auto"
+                }
+              ]
+            },
+            "image": {
+              "type": "string"
+            },
+            "imagePullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "default": "IfNotPresent"
+            },
+            "resources": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "enabled",
+            "continue",
+            "fsGroup",
+            "imagePullPolicy"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              },
+              "then": {
+                "required": [
+                  "image"
+                ],
+                "properties": {
+                  "image": {
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          ],
+          "additionalProperties": false
+        }
+      },
       "additionalProperties": false
     },
     "service": {

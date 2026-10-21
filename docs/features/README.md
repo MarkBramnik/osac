@@ -22,9 +22,11 @@ All of this adds up to an easy-to-use, on-demand solution that cloud providers c
 * [Console Access](MGMT-22670-console-access.md) - Serial console access for compute instances
 * [Netris CaaS Networking](netris-caas-networking.md) - Network traffic flow with Netris backend
 * [Per-Service Enablement](OSAC-4683-per-service-enablement.md) - Configure and verify enabled OSAC service tiers
+* [Remote Debugging the OSAC Operator](remote-debugging.md) - Attach an IDE to the operator manager in a cluster
 
 ## Developer Guides
 
 * [Tenant Setup](../guides/developer/tenant-setup.md) - Create and configure a Tenant
 * [Creating a VM](../guides/developer/computeinstance-guide.md) - Create a ComputeInstance with networking
 * [Assigning a Public IP](../guides/developer/publicip-guide.md) - Allocate and attach a PublicIP to a ComputeInstance
+* [Remote Debugging the OSAC Operator (full guide)](../guides/developer/remote-debugging.md) - Setup details and troubleshooting

@@ -19,6 +19,8 @@ see [Configuring an external Kafka cluster](guides/installation/kafka-configurat
 
 - [Ethernet FabricDomains](guides/admin/fabric-domains.md): hardware bindings,
   inventory onboarding, membership changes, cleanup, and troubleshooting.
+- [Remote debugging the OSAC Operator](guides/developer/remote-debugging.md):
+  debug images, OpenShift SCC setup, installer targets, and IDE attachment.
 
 This directory also contains concise, hand-maintained guidance for
 architecture and conventions that span component or repository boundaries

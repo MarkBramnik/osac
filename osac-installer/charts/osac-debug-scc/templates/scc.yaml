@@ -1,0 +1,48 @@
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: osac-remote-debug
+  labels:
+    app.kubernetes.io/name: osac-debug-scc
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
+  annotations:
+    kubernetes.io/description: >-
+      Temporary OSAC remote-debug policy. All service accounts may request
+      SYS_PTRACE and unconfined seccomp; privileged containers, host access,
+      and privilege escalation remain disabled.
+priority: 0
+allowPrivilegedContainer: false
+allowPrivilegeEscalation: false
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+readOnlyRootFilesystem: true
+allowedCapabilities:
+- SYS_PTRACE
+defaultAddCapabilities: []
+requiredDropCapabilities:
+- ALL
+seccompProfiles:
+- runtime/default
+- unconfined
+runAsUser:
+  type: MustRunAsRange
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: MustRunAs
+supplementalGroups:
+  type: RunAsAny
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- projected
+- secret
+users: []
+groups:
+- system:serviceaccounts

@@ -1,3 +1,15 @@
+{{- $debugValues := (index .Values "debug") | default dict -}}
+{{- $debugEnabled := index $debugValues "enabled" -}}
+{{- $debugContinueValue := index $debugValues "continue" -}}
+{{- $debugContinue := ternary true $debugContinueValue (eq $debugContinueValue nil) -}}
+{{- $debugFSGroupValue := index $debugValues "fsGroup" -}}
+{{- $debugFSGroup := ternary "auto" $debugFSGroupValue (eq $debugFSGroupValue nil) -}}
+{{- $debugImage := (index $debugValues "image") | default "ghcr.io/osac-project/osac-operator:latest-debug" -}}
+{{- $debugImagePullPolicy := (index $debugValues "imagePullPolicy") | default "IfNotPresent" -}}
+{{- $debugResources := (index $debugValues "resources") | default (dict "limits" (dict "cpu" "1" "memory" "1Gi") "requests" (dict "cpu" "100m" "memory" "256Mi")) -}}
+{{- if and $debugEnabled (not .Values.serviceAccount.create) -}}
+{{- fail "debug.enabled requires serviceAccount.create=true so the debug SCC can be scoped to a dedicated service account" -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,23 +33,52 @@ spec:
       securityContext:
         runAsNonRoot: true
         seccompProfile:
+          {{- if $debugEnabled }}
+          type: Unconfined
+          {{- else }}
           type: RuntimeDefault
+          {{- end }}
+        {{- if and $debugEnabled (ne (toString $debugFSGroup) "auto") }}
+        fsGroup: {{ $debugFSGroup }}
+        {{- end }}
       containers:
       - name: manager
+        {{- if $debugEnabled }}
+        command:
+        - /usr/local/bin/debug-entrypoint
+        {{- else }}
         command:
         - /usr/local/bin/manager
+        {{- end }}
         args:
-          - --leader-elect
+          - --leader-elect={{ not $debugEnabled }}
           - --health-probe-bind-address=:8081
           - --metrics-bind-address=:8443
           - --fulfillment-ca-file=/etc/ca-bundle/bundle.pem
+        {{- if $debugEnabled }}
+        image: {{ $debugImage | quote }}
+        imagePullPolicy: {{ $debugImagePullPolicy }}
+        ports:
+        - name: debugger
+          containerPort: 2345
+          protocol: TCP
+        {{- else }}
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- end }}
         envFrom:
           - secretRef:
               name: {{ .Values.configSecret.name }}
               optional: {{ .Values.configSecret.optional }}
         env:
+          {{- if $debugEnabled }}
+          - name: OSAC_DEBUG_CONTINUE
+            value: {{ $debugContinue | quote }}
+          - name: HOME
+            value: /tmp
+          - name: TMPDIR
+            value: /tmp
+          {{- end }}
           - name: OSAC_AAP_URL
             value: {{ .Values.aap.url | default "http://osac-aap/api/controller" | quote }}
           {{- if and .Values.aap.tokenSecret .Values.aap.tokenSecret.name }}
@@ -177,6 +218,11 @@ spec:
           capabilities:
             drop:
             - "ALL"
+            {{- if $debugEnabled }}
+            add:
+            - SYS_PTRACE
+            {{- end }}
+        {{- if not $debugEnabled }}
         livenessProbe:
           httpGet:
             path: /healthz
@@ -189,12 +235,21 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
+        {{- end }}
         resources:
+          {{- if $debugEnabled }}
+          {{- toYaml $debugResources | nindent 10 }}
+          {{- else }}
           {{- toYaml .Values.resources | nindent 10 }}
+          {{- end }}
         volumeMounts:
           - name: fulfillment-ca-bundle
             mountPath: /etc/ca-bundle
             readOnly: true
+          {{- if $debugEnabled }}
+          - name: debug-tmp
+            mountPath: /tmp
+          {{- end }}
       volumes:
         - name: fulfillment-ca-bundle
           configMap:
@@ -202,5 +257,9 @@ spec:
             items:
               - key: {{ .Values.fulfillment.tls.caBundle.key | required "fulfillment.tls.caBundle.key is required" }}
                 path: bundle.pem
+        {{- if $debugEnabled }}
+        - name: debug-tmp
+          emptyDir: {}
+        {{- end }}
       serviceAccountName: {{ include "osac-operator.serviceAccountName" . }}
       terminationGracePeriodSeconds: 10

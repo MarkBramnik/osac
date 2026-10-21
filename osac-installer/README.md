@@ -458,6 +458,122 @@ Tear down everything (including the kind cluster, via the same runtime wrapper):
 make uninstall PLATFORM=kind PROFILE=dev-full NS=osac
 ```
 
+#### Remote debugging the OSAC operator
+
+`install-osac-operator` updates the operator in an **existing** `osac` Helm
+release; it does not create a second operator release. It builds only the
+operator debug image and leaves other OSAC images unchanged. Install the normal
+OSAC release first, then enable the debug image. Pass the same `PROFILE` used
+for that environment; for example, `vmaas-ci` is an OpenShift profile. The
+target reuses the release's stored values rather than replacing the rest of
+the OSAC configuration.
+
+```bash
+# Kind: build for the host architecture and load the image into the cluster.
+make install-osac-operator PLATFORM=kind PROFILE=dev NS=osac REMOTE_DEBUG=true
+
+# OpenShift: provide a registry reference the cluster can pull.
+make install-osac-operator PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
+  REMOTE_DEBUG=true \
+  REMOTE_DEBUG_IMAGE=quay.io/<your-org>/osac-operator:dev-debug \
+  IMAGE_PLATFORM=linux/amd64
+```
+
+`IMAGE_PLATFORM` defaults to the host architecture (`linux/arm64` on Apple
+Silicon and ARM Linux; `linux/amd64` on x86 hosts). Override it to cross-build,
+for example when building an x86 image from an ARM Mac. Docker and Podman are
+supported through `CONTAINER_TOOL`.
+
+Delve continues the operator by default while listening on `127.0.0.1:2345`.
+To leave the manager paused until the IDE connects, use:
+
+```bash
+make install-osac-operator PLATFORM=kind PROFILE=dev NS=osac \
+  REMOTE_DEBUG=true DEBUG_CONTINUE=false
+```
+
+With probes removed, Helm's normal `--wait` only waits for the Delve container
+to be running; it does not wait for the debugger to attach or the manager to
+resume.
+
+Forward the debugger port, then attach from an IDE configured for a remote
+Delve session (or use `dlv connect` to test the connection):
+
+```bash
+kubectl port-forward -n osac deployment/osac-operator 2345:2345
+dlv connect 127.0.0.1:2345
+```
+
+For a one-off manual change, edit the manager container's `OSAC_DEBUG_CONTINUE`
+environment variable in the Deployment and wait for its pod rollout. A later
+Helm upgrade restores the value from the release configuration.
+
+Use `oc port-forward` on OpenShift. The debug API is unauthenticated, so the
+chart creates no Service or Route for it; access it only through port-forward.
+Delve permits the port-forward client despite the kubelet's different UID, but
+the debugger remains bound to loopback inside the pod.
+Debug mode removes manager probes, mounts writable `/tmp`, requests
+`SYS_PTRACE`, and uses separate resource values. On OpenShift, install the
+temporary SCC before enabling the debug operator:
+
+```bash
+make enable-debug
+make install-osac-operator PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
+  REMOTE_DEBUG=true \
+  REMOTE_DEBUG_IMAGE=quay.io/<your-org>/osac-operator:dev-debug
+```
+
+`enable-debug` installs the SCC as a separate Helm release named
+`osac-debug-scc`; Helm stores that release in `kube-system`. The SCC is
+cluster-scoped and permits **every service account in every namespace** to
+request `SYS_PTRACE` and unconfined seccomp. It still denies privileged
+containers, host access, and privilege escalation, and requires a read-only
+root filesystem. Use it only temporarily on clusters where that cluster-wide
+permission is acceptable. Normal operator pods retain their existing service
+account and should continue to use `restricted-v2`. The console proxy is a
+separate Deployment and is not switched to the debug image by this target.
+The SCC targets use the inherited `KUBECONFIG`, or `~/.kube/config` if it is
+unset; they do not select the installer's profile-specific Kind kubeconfig.
+Debug mode also disables manager leader election so long breakpoints do not
+expire its Lease. Use it with a single debug manager and ensure no other OSAC
+operator instance is reconciling the same resources; otherwise both can
+reconcile concurrently. Setting `REMOTE_DEBUG=false` restores leader election.
+
+To disable debugging, restore the normal operator deployment first, then remove
+the SCC:
+
+```bash
+make install-osac-operator PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
+  REMOTE_DEBUG=false
+make disable-debug
+```
+
+`disable-debug` refuses to uninstall the release while any non-terminal pod in
+any namespace has either the managed SCC or the legacy debug SCC assigned. It
+does not switch workloads back to normal security settings; restore any debug
+workloads before invoking it. Both SCC targets require the OpenShift SCC API,
+but do not need `PLATFORM`, `PROFILE`, or `NS` arguments.
+
+For clusters that still have the legacy, manually applied
+`osac-operator-debug` SCC, migrate it once: install the Helm-managed SCC, verify
+it is present, then remove the old SCC before rolling the debug operator so the
+new pod is admitted under `osac-remote-debug`. If the Deployment was already in
+debug mode, force a rollout and verify the pod's `openshift.io/scc` annotation
+names `osac-remote-debug`. Only delete the legacy SCC if it is the temporary
+resource created for this debug setup; the targets do not delete unmanaged
+SCCs, and `disable-debug` warns if that legacy resource remains.
+
+To restore the normal manager image and probes:
+
+```bash
+make install-osac-operator PLATFORM=kind PROFILE=dev NS=osac REMOTE_DEBUG=false
+```
+
+The debug-only Helm values are intentionally not added to the installer JSON
+schema, so they do not create Enclave Wizard controls. This focused target skips
+schema validation for its upgrade only; ordinary installer targets retain
+schema validation.
+
 #### Configure Values
 
 Each profile has two values files under `values/<profile>/`:

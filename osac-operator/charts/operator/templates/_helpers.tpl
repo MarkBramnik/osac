@@ -62,11 +62,13 @@ app.kubernetes.io/component: console-proxy
 Service account name
 */}}
 {{- define "osac-operator.serviceAccountName" -}}
-{{- if .Values.serviceAccount.name }}
-{{- .Values.serviceAccount.name }}
-{{- else }}
-{{- include "osac-operator.fullname" . }}
-{{- end }}
+{{- $name := default (include "osac-operator.fullname" .) .Values.serviceAccount.name -}}
+{{- $debugValues := (index .Values "debug") | default dict -}}
+{{- if and (index $debugValues "enabled") .Values.serviceAccount.create -}}
+{{- printf "%s-debug" $name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- $name -}}
+{{- end -}}
 {{- end }}
 
 {{/*

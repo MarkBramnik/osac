@@ -362,6 +362,37 @@ make uninstall
 make undeploy
 ```
 
+## Remote-debug image
+
+The optional debug image adds Delve and an unoptimized manager binary to the
+normal operator image. It is built separately and is not used by release
+builds:
+
+```bash
+# Defaults to linux/arm64 on ARM hosts and linux/amd64 on x86 hosts.
+make image-build-debug DEBUG_IMG=quay.io/<your-org>/osac-operator:dev-debug
+
+# Cross-build, for example from an ARM Mac for an x86 OpenShift cluster.
+make image-build-debug \
+  DEBUG_IMG=quay.io/<your-org>/osac-operator:dev-debug \
+  IMAGE_PLATFORM=linux/amd64
+
+make image-push-debug DEBUG_IMG=quay.io/<your-org>/osac-operator:dev-debug
+make test-debug-entrypoint
+```
+
+Both Docker and Podman are supported through `CONTAINER_TOOL`. For the
+profile-aware deployment workflow, including kind image loading and the
+OpenShift debug SCC prerequisite, see the [installer remote-debug
+guide](../osac-installer/README.md#remote-debugging-the-osac-operator).
+
+The normal manager runs with leader election enabled. The debug profile passes
+`--leader-elect=false` so a breakpoint can pause the manager longer than its
+normal Lease-renewal deadline without terminating it. Use this only with one
+debug manager and no other OSAC operator instance reconciling the same resources;
+otherwise multiple managers may reconcile concurrently. Disabling debug mode
+restores leader election.
+
 ## Project Distribution
 
 Following are the steps to build the installer and distribute this project to

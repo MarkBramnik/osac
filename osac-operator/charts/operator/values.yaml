@@ -18,6 +18,11 @@ resources:
     cpu: 10m
     memory: 128Mi
 
+# The developer-only debug values are read with template defaults rather than
+# listed here. The umbrella installer schema is consumed by Enclave Wizard;
+# keeping these values out of its defaults avoids exposing developer controls.
+# The installer target sets fsGroup=1001 on Kind and fsGroup=auto on OpenShift.
+
 aap:
   url: ""
   token: ""
