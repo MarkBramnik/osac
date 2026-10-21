@@ -248,11 +248,12 @@ the certificate. The Kind
 `SUITE=fulfillment` target exercises deployed startup and API behavior, subject
 to the profile's configured CA and enabled services.
 
-The `make certificate-validation-render-test` Helm contract verifies the secure
-default and development overrides through the AAP storage instance-group
-ConfigMap and the dev-full AWX configuration hook. It checks rendered
-configuration only; the storage role's unit and local mock-HTTPS integration
-tests cover Ansible client behavior, not a deployed controller.
+The `make helm-networking-test` Helm contract verifies the secure default and
+development overrides in the AAP storage instance-group ConfigMap. The
+`make dev-full-render-test` contract checks the AWX hook's default and
+development override, and exercises its `AWX_TASK_ENV` merge with fixture input.
+These checks do not exercise a deployed controller; the storage role's unit and
+local mock-HTTPS integration tests cover Ansible client behavior.
 
 ### OSAC-5343 deployed enablement coverage
 
