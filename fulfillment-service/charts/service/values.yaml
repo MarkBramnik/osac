@@ -14,9 +14,14 @@
 # This indicates if the chart is being deployed to an OpenShift or Kind cluster. Valid values are `openshift` and `kind`.
 variant: kind
 
-# This indicates if the debug mode is enabled. This will run the services under the control of the 'dlv' debugger
-# and is intended only for development environments.
-debug: false
+# Developer-only settings for Delve. The focused installer adds an overlay with
+# enabled=true only for debug sessions and supplies the debug image; do not use
+# on production deployments.
+debug:
+  enabled: false
+  continue: false
+  image: ""
+  imagePullPolicy: IfNotPresent
 
 # Controller configuration:
 controller:

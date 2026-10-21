@@ -1139,14 +1139,44 @@
             "type": "string"
           }
         },
-        "debug": {
-          "type": "boolean",
-          "description": "Enable debug mode for the fulfillment service (subchart default)",
-          "default": false
-        },
         "global": {
           "type": "object",
           "description": "Helm-injected global values (passed automatically to subcharts)"
+        }
+      },
+      "patternProperties": {
+        "^debug$": {
+          "type": "object",
+          "description": "Developer-only Fulfillment remote-debug settings",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "continue": {
+              "type": "boolean",
+              "default": false
+            },
+            "image": {
+              "type": "string"
+            },
+            "imagePullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "default": "IfNotPresent"
+            }
+          },
+          "required": ["enabled", "continue", "image", "imagePullPolicy"],
+          "allOf": [{
+            "if": {
+              "properties": {"enabled": {"const": true}},
+              "required": ["enabled"]
+            },
+            "then": {
+              "properties": {"image": {"minLength": 1}}
+            }
+          }],
+          "additionalProperties": false
         }
       },
       "allOf": [

@@ -234,20 +234,32 @@ To verify that the REST gateway is working use `curl`. For example, to get the l
 
 ## Building the container image
 
-Select your image name, for example `quay.io/myuser/fulfillment-service:latest`, then build and tag the image with a
-command like this:
+Build from the mono-repo root because the Containerfile copies workspace
+modules. Select an image name, for example
+`quay.io/myuser/fulfillment-service:latest`:
 
-    $ podman build -t quay.io/myuser/fulfillment-service:latest .
+    $ podman build -t quay.io/myuser/fulfillment-service:latest \
+        -f fulfillment-service/Containerfile .
 
-To build the debug variant (includes the `dlv` debugger and disables compiler optimisations), use the
-`runtime-debug` target:
+To build the debug variant (includes Delve and disables compiler optimisations),
+use the `runtime-debug` target. This image includes the debug entrypoint used by
+the focused remote-debug chart profile:
 
-    $ podman build --build-arg DEBUG=true --target runtime-debug -t quay.io/myuser/fulfillment-service:latest .
+    $ make -C fulfillment-service image-build-debug \
+        DEBUG_IMG=quay.io/myuser/fulfillment-service:latest-debug \
+        IMAGE_PLATFORM=linux/amd64
 
-If you want to deploy to an OpenShift cluster then you will also need to push the image, so that the cluster can pull
-it:
+Debug builds support `linux/amd64` and `linux/arm64`, defaulting to the host
+architecture. Push the image for OpenShift, or let the installer load it into
+Kind:
 
-    $ podman push quay.io/myuser/fulfillment-service:latest
+    $ make -C fulfillment-service image-push-debug \
+        DEBUG_IMG=quay.io/myuser/fulfillment-service:latest-debug
+
+The focused install workflow builds and pushes or loads one image for the
+controller, gRPC server, REST gateway, and event publisher. See the
+[remote-debugging guide](../docs/guides/developer/remote-debugging.md) for
+deployment commands and the OpenShift SCC setup.
 
 ## Running integration tests
 

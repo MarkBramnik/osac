@@ -25,3 +25,5 @@ kind-load-image: ## Load the built image into the dev-full Kind cluster.
 	$(call kind-load-image,$(IMG))
 
 include $(shell git rev-parse --show-toplevel)/osac-installer/scripts/dev-full/kind-load-image.mk
+
+include make/remote-debug.mk

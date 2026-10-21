@@ -28,7 +28,7 @@ spec:
       app: fulfillment-mcp-server
   replicas: 1
   strategy:
-    type: {{ if .Values.debug }}Recreate{{ else }}RollingUpdate{{ end }}
+    type: RollingUpdate
   template:
     metadata:
       labels:

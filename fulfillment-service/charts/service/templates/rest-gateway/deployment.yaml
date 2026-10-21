@@ -24,12 +24,20 @@ spec:
       app: fulfillment-rest-gateway
   replicas: 1
   strategy:
-    type: {{ if .Values.debug }}Recreate{{ else }}RollingUpdate{{ end }}
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ if .Values.debug.enabled }}0{{ else }}"25%"{{ end }}
+      maxUnavailable: {{ if .Values.debug.enabled }}"100%"{{ else }}"25%"{{ end }}
   template:
     metadata:
       labels:
         app: fulfillment-rest-gateway
     spec:
+      {{ if .Values.debug.enabled }}
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+      {{ end }}
       volumes:
       - name: cas
         configMap:
@@ -37,29 +45,50 @@ spec:
       - name: tls
         secret:
           secretName: fulfillment-rest-gateway-tls
+      {{ if .Values.debug.enabled }}
+      - name: debug-tmp
+        emptyDir: {}
+      {{ end }}
       containers:
       - name: rest-gateway
-        image: {{ .Values.images.service.repository }}:{{ .Values.images.service.tag }}
-        imagePullPolicy: {{ .Values.images.service.pullPolicy }}
+        image: {{ include "fulfillment-service.serviceImage" . | quote }}
+        imagePullPolicy: {{ include "fulfillment-service.serviceImagePullPolicy" . }}
+        {{ if .Values.debug.enabled }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - SYS_PTRACE
+        {{ end }}
         volumeMounts:
         - name: cas
           mountPath: /etc/fulfillment-rest-gateway/tls/cas
         - name: tls
           mountPath: /etc/fulfillment-rest-gateway/tls
+        {{ if .Values.debug.enabled }}
+        - name: debug-tmp
+          mountPath: /tmp
+        {{ end }}
+        {{ if .Values.debug.enabled }}
+        env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+        - name: OSAC_DEBUG_CONTINUE
+          value: {{ .Values.debug.continue | default false | quote }}
+        - name: OSAC_DEBUG_LISTEN_ADDRESS
+          value: 127.0.0.1:2345
+        {{ end }}
         command:
-        {{ if .Values.debug }}
-        - dlv
-        - exec
-        - /usr/local/bin/fulfillment-service
-        - --headless
-        - --api-version=2
-        - --listen=:30002
-        - --accept-multiclient
-        - --continue
-        - --
+        {{ if .Values.debug.enabled }}
+        - /usr/local/bin/debug-entrypoint
         {{ else}}
         - /usr/local/bin/fulfillment-service
         {{ end }}
+        args:
         - start
         - rest-gateway
         - --log-level={{ .Values.log.level }}
@@ -95,13 +124,12 @@ spec:
         - name: metrics
           containerPort: 8002
           protocol: TCP
-        {{ if .Values.debug }}
+        {{ if .Values.debug.enabled }}
         - name: debug
-          containerPort: 30002
-          hostPort: 30002
+          containerPort: 2345
           protocol: TCP
         {{ end }}
-        {{ if not .Values.debug }}
+        {{ if not .Values.debug.enabled }}
         livenessProbe:
           httpGet:
             path: /healthz

@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Verify the operator debug values render without becoming Wizard schema fields."""
+"""Verify focused operator and Fulfillment debug chart renders."""
 
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import yaml
-
 
 INSTALLER = Path(__file__).resolve().parents[1]
 CHART = INSTALLER / "charts/osac"
 DEFAULT_VALUES = CHART / "ci/default-values.yaml"
 DEBUG_IMAGE = "registry.example.test/osac-operator:dev-debug"
+FULFILLMENT_DEBUG_IMAGE = "registry.example.test/fulfillment-service:dev-debug"
+FULFILLMENT_DEBUG_VALUES = INSTALLER / "values/remote-debug-fulfillment.yaml"
 
 
 def render(*overrides: str) -> list[dict]:
@@ -76,7 +77,24 @@ def console_proxy(docs: list[dict]) -> dict:
     raise AssertionError("console-proxy Deployment was not rendered")
 
 
-def test_debug_values_are_absent_from_wizard_schema() -> None:
+def deployment_container(
+    docs: list[dict], deployment_name: str, container_name: str
+) -> tuple[dict, dict]:
+    for document in docs:
+        if (
+            document.get("kind") == "Deployment"
+            and document.get("metadata", {}).get("name") == deployment_name
+        ):
+            pod_spec = document["spec"]["template"]["spec"]
+            for container in pod_spec["containers"]:
+                if container["name"] == container_name:
+                    return document, container
+    raise AssertionError(
+        f"{deployment_name}/{container_name} Deployment container was not rendered"
+    )
+
+
+def test_debug_image_overrides_are_not_wizard_controls() -> None:
     schema = json.loads((CHART / "values.schema.json").read_text(encoding="utf-8"))
     operator_properties = schema["properties"]["operator"]["properties"]
     assert "debug" not in operator_properties
@@ -86,6 +104,17 @@ def test_debug_values_are_absent_from_wizard_schema() -> None:
     assert "image" not in operator_debug_schema["required"]
     values = yaml.safe_load((CHART / "values.yaml").read_text(encoding="utf-8"))
     assert "debug" not in values["operator"]
+
+    service_schema = schema["properties"]["service"]
+    service_properties = service_schema["properties"]
+    assert "debug" not in service_properties
+    debug_schema = service_schema["patternProperties"]["^debug$"]
+    assert debug_schema["properties"]["enabled"]["default"] is False
+    assert debug_schema["properties"]["continue"]["default"] is False
+    debug_overlay = yaml.safe_load(
+        FULFILLMENT_DEBUG_VALUES.read_text(encoding="utf-8")
+    )
+    assert debug_overlay["service"]["debug"]["enabled"] is True
 
 
 def test_normal_umbrella_render_uses_normal_image() -> None:
@@ -138,6 +167,122 @@ def test_debug_upgrade_only_changes_operator_manager() -> None:
     assert "SYS_PTRACE" not in proxy["securityContext"]["capabilities"].get("add", [])
 
 
+def test_normal_fulfillment_deployments_use_normal_image() -> None:
+    docs = render()
+    expected = {
+        "fulfillment-controller": "controller",
+        "fulfillment-grpc-server": "grpc-server",
+        "fulfillment-rest-gateway": "rest-gateway",
+        "fulfillment-event-publisher": "event-publisher",
+    }
+    for deployment_name, container_name in expected.items():
+        deployment, container = deployment_container(
+            docs, deployment_name, container_name
+        )
+        assert container["image"] == "ghcr.io/osac-project/fulfillment-service:latest"
+        assert container["command"] == ["/usr/local/bin/fulfillment-service"]
+        assert "debug" not in [port["name"] for port in container.get("ports", [])]
+        assert "livenessProbe" in container
+        assert "readinessProbe" in container
+        if deployment_name != "fulfillment-event-publisher":
+            strategy = deployment["spec"]["strategy"]
+            assert strategy["type"] == "RollingUpdate"
+            assert strategy["rollingUpdate"] == {
+                "maxSurge": "25%",
+                "maxUnavailable": "25%",
+            }
+
+
+def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
+    docs = render(
+        "--values",
+        str(FULFILLMENT_DEBUG_VALUES),
+        "--set",
+        "service.debug.continue=false",
+        "--set",
+        "service.debug.imagePullPolicy=IfNotPresent",
+        "--set-string",
+        f"service.debug.image={FULFILLMENT_DEBUG_IMAGE}",
+    )
+    expected = {
+        "fulfillment-controller": ("controller", "controller"),
+        "fulfillment-grpc-server": ("grpc-server", "grpc-server"),
+        "fulfillment-rest-gateway": ("rest-gateway", "rest-gateway"),
+        "fulfillment-event-publisher": ("event-publisher", "event-publisher"),
+    }
+    for deployment_name, (container_name, process_name) in expected.items():
+        deployment, container = deployment_container(
+            docs, deployment_name, container_name
+        )
+        pod_spec = deployment["spec"]["template"]["spec"]
+        strategy = deployment["spec"]["strategy"]
+        if deployment_name != "fulfillment-event-publisher":
+            assert strategy["type"] == "RollingUpdate"
+            assert strategy["rollingUpdate"] == {
+                "maxSurge": 0,
+                "maxUnavailable": "100%",
+            }
+        else:
+            assert strategy["type"] == "Recreate"
+        assert container["image"] == FULFILLMENT_DEBUG_IMAGE
+        assert container["imagePullPolicy"] == "IfNotPresent"
+        assert container["command"] == ["/usr/local/bin/debug-entrypoint"]
+        assert container["args"][:2] == ["start", process_name]
+        assert container["ports"][-1] == {
+            "name": "debug",
+            "containerPort": 2345,
+            "protocol": "TCP",
+        }
+        assert all("hostPort" not in port for port in container["ports"])
+        assert "livenessProbe" not in container
+        assert "readinessProbe" not in container
+        assert container["securityContext"]["capabilities"]["add"] == ["SYS_PTRACE"]
+        assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
+        assert pod_spec["securityContext"]["seccompProfile"]["type"] == "Unconfined"
+        assert {"name": "debug-tmp", "emptyDir": {}} in pod_spec["volumes"]
+        assert {"name": "debug-tmp", "mountPath": "/tmp"} in container[
+            "volumeMounts"
+        ]
+        env = {item["name"]: item.get("value") for item in container.get("env", [])}
+        assert env["HOME"] == "/tmp"
+        assert env["TMPDIR"] == "/tmp"
+        assert env["OSAC_DEBUG_CONTINUE"] == "false"
+        assert env["OSAC_DEBUG_LISTEN_ADDRESS"] == "127.0.0.1:2345"
+
+    mcp_deployment, mcp = deployment_container(
+        docs, "fulfillment-mcp-server", "mcp-server"
+    )
+    assert mcp_deployment["spec"]["strategy"]["type"] == "RollingUpdate"
+    assert mcp["image"] == "ghcr.io/osac-project/fulfillment-service:latest"
+    assert mcp["command"][0] == "/usr/local/bin/fulfillment-service"
+    assert "/usr/local/bin/debug-entrypoint" not in mcp["command"]
+    assert "debug" not in [port["name"] for port in mcp.get("ports", [])]
+
+    assert not any(
+        document.get("kind") == "Service"
+        and any(port.get("port") == 2345 for port in document.get("spec", {}).get("ports", []))
+        for document in docs
+    )
+
+
+def test_fulfillment_debug_disabled_uses_normal_image_and_probes() -> None:
+    docs = render("--set", "service.debug.enabled=false")
+    _, grpc = deployment_container(docs, "fulfillment-grpc-server", "grpc-server")
+    assert grpc["image"] == "ghcr.io/osac-project/fulfillment-service:latest"
+    assert grpc["command"] == ["/usr/local/bin/fulfillment-service"]
+    assert "livenessProbe" in grpc
+    assert "readinessProbe" in grpc
+
+
+def test_fulfillment_debug_requires_an_image_reference() -> None:
+    try:
+        render("--values", str(FULFILLMENT_DEBUG_VALUES))
+    except AssertionError as error:
+        assert "image" in str(error)
+    else:
+        raise AssertionError("Fulfillment debug rendered without a debug image")
+
+
 def test_operator_debug_requires_an_image_reference() -> None:
     try:
         render(
@@ -180,11 +325,14 @@ def test_debug_scc_is_narrow_except_for_explicit_cluster_wide_use() -> None:
 
 
 def main() -> None:
-    test_debug_values_are_absent_from_wizard_schema()
+    test_debug_image_overrides_are_not_wizard_controls()
     test_normal_umbrella_render_uses_normal_image()
     test_debug_upgrade_only_changes_operator_manager()
+    test_normal_fulfillment_deployments_use_normal_image()
+    test_fulfillment_debug_upgrade_changes_only_four_processes()
+    test_fulfillment_debug_disabled_uses_normal_image_and_probes()
+    test_fulfillment_debug_requires_an_image_reference()
     test_operator_debug_requires_an_image_reference()
-
     test_debug_scc_is_narrow_except_for_explicit_cluster_wide_use()
     print("installer remote-debug render contracts passed")
 

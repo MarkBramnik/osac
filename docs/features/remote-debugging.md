@@ -1,22 +1,25 @@
-# Remote debugging the OSAC Operator
+# Remote debugging OSAC components
 
-This feature provides an IDE connection to the OSAC Operator manager running
-inside a cluster. For full setup details and variable reference, see the
+This feature provides IDE connections to the OSAC Operator manager and the four
+supported Fulfillment service processes running inside a cluster. For full setup
+details and variable reference, see the
 [developer guide](../guides/developer/remote-debugging.md).
 
 ## 1. Goal
 
-Debug the operator manager in its existing deployment with breakpoints and
-source-level inspection. The console proxy is not debugged, and Delve is not
-included in or enabled by the regular operator image.
+Debug the operator manager or the Fulfillment controller, gRPC server, REST
+gateway, and event publisher in their existing Deployments. The normal images do
+not include or run Delve.
 
 ## 2. Architecture and configuration
 
-With debug enabled, the manager container runs Delve as PID 1. Delve launches
-the unoptimized manager binary and listens on `127.0.0.1:2345` inside the Pod.
-The developer connects through a local port-forward; no Service or Route exposes
+With debug enabled, the target container runs Delve as PID 1. Delve launches the
+unoptimized Go process and listens on `127.0.0.1:2345` inside the Pod. The
+developer connects through a local port-forward; no Service or Route exposes
 Delve. The installer updates the existing `osac` Helm release rather than
-creating a second operator Deployment.
+creating duplicate Deployments. Fulfillment uses one shared debug image for its
+four supported Deployments; its debug-only values overlay enables
+`service.debug.enabled`, and `DEBUG_CONTINUE=false` pauses them until IDE attach.
 
 The `debug-me` helper uses a target entry in `debug-config.yaml`; its source
 mapping lets VS Code map local files to the paths recorded in the debug binary:
@@ -32,8 +35,14 @@ targets:
         to: "/opt/app-root/src/osac-operator"
 ```
 
-Debug-only Helm values are not exposed through Enclave Wizard or the installer
-schema.
+Fulfillment's developer-only `debug` object is validated through
+`patternProperties`, not exposed as an Enclave Wizard control. The focused Make
+target conditionally applies `values/remote-debug-fulfillment.yaml`; don't
+toggle debug from the Wizard.
+
+For Fulfillment, `debug-me` has one entry per Deployment/container. Each Delve
+listener uses Pod port `2345`; the local config assigns workstation ports
+`2346`–`2349` so the four tunnels can run concurrently.
 
 ## 3. Commands
 
@@ -51,16 +60,27 @@ make -C osac-installer install-osac-operator \
   REMOTE_DEBUG=true \
   REMOTE_DEBUG_IMAGE=quay.io/<your-org>/osac-operator:dev-debug \
   IMAGE_PLATFORM=linux/amd64
+
+make -C osac-installer install-fulfillment-service \
+  PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
+  REMOTE_DEBUG=true DEBUG_CONTINUE=false \
+  REMOTE_DEBUG_IMAGE=quay.io/<your-org>/fulfillment-service:dev-debug \
+  IMAGE_PLATFORM=linux/amd64
 ```
 
-The install target builds and pushes the image. `IMAGE_PLATFORM` selects
-`linux/amd64` or `linux/arm64`; use `linux/amd64` to build for an x86 cluster
-from an ARM Mac. `DEBUG_CONTINUE=false` leaves the manager paused until attach.
+The install targets build and push the image. Fulfillment builds one shared
+image for its four supported processes. `IMAGE_PLATFORM` selects `linux/amd64`
+or `linux/arm64`; use `linux/amd64` to build for an x86 cluster from an ARM Mac.
+`DEBUG_CONTINUE=false` leaves the operator manager or Fulfillment processes
+paused until attach.
 
-When finished, restore the normal operator first, then remove the SCC:
+When finished, restore normal mode for each component you debugged, then remove
+the SCC. To restore both:
 
 ```bash
 make -C osac-installer install-osac-operator \
+  PLATFORM=openshift PROFILE=vmaas-ci NS=osac REMOTE_DEBUG=false
+make -C osac-installer install-fulfillment-service \
   PLATFORM=openshift PROFILE=vmaas-ci NS=osac REMOTE_DEBUG=false
 make -C osac-installer disable-debug
 ```
@@ -72,12 +92,24 @@ seccomp. Use it only temporarily where that broad scope is acceptable.
 `disable-debug` refuses to remove it while non-terminal Pods still use the
 managed or legacy debug SCC.
 
+The same SCC supports the Fulfillment debug profile. Use
+`install-fulfillment-service` to enable or disable it; the command builds and
+pushes one shared image on OpenShift, or builds and loads it for Kind.
+
 ### Kind
 
 Kind does not need the SCC targets:
 
 ```bash
 make -C osac-installer install-osac-operator \
+  PLATFORM=kind PROFILE=dev NS=osac REMOTE_DEBUG=true
+```
+
+Fulfillment uses the same platform/profile/namespace flags and defaults to
+waiting for the IDE before continuing the four processes:
+
+```bash
+make -C osac-installer install-fulfillment-service \
   PLATFORM=kind PROFILE=dev NS=osac REMOTE_DEBUG=true
 ```
 
@@ -90,6 +122,7 @@ Pod, inspect it, and stop the local tunnel when done:
 ./debug.sh start <operator-pod-name> -n osac -c manager
 ./debug.sh status <operator-pod-name> -n osac -c manager
 ./debug.sh stop <operator-pod-name> -n osac -c manager
+./debug.sh start <fulfillment-pod-name> -n osac -c grpc-server
 ```
 
 `start` reuses the prestarted Delve server in the OSAC debug image and forwards

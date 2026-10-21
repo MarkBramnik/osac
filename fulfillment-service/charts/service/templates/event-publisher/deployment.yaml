@@ -33,6 +33,11 @@ spec:
         app: fulfillment-event-publisher
     spec:
       automountServiceAccountToken: false
+      {{ if .Values.debug.enabled }}
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+      {{ end }}
       volumes:
       - name: ca-bundle
         configMap:
@@ -94,10 +99,14 @@ spec:
           {{ else }}
           []
           {{ end }}
+      {{ if .Values.debug.enabled }}
+      - name: debug-tmp
+        emptyDir: {}
+      {{ end }}
       containers:
       - name: event-publisher
-        image: {{ .Values.images.service.repository }}:{{ .Values.images.service.tag }}
-        imagePullPolicy: {{ .Values.images.service.pullPolicy }}
+        image: {{ include "fulfillment-service.serviceImage" . | quote }}
+        imagePullPolicy: {{ include "fulfillment-service.serviceImagePullPolicy" . }}
         securityContext:
           runAsNonRoot: true
           allowPrivilegeEscalation: false
@@ -105,6 +114,10 @@ spec:
           capabilities:
             drop:
             - ALL
+            {{ if .Values.debug.enabled }}
+            add:
+            - SYS_PTRACE
+            {{ end }}
         volumeMounts:
         - name: ca-bundle
           mountPath: /etc/ca-bundle
@@ -118,20 +131,28 @@ spec:
         - name: kafka
           mountPath: /etc/fulfillment-event-publisher/kafka
           readOnly: true
+        {{ if .Values.debug.enabled }}
+        - name: debug-tmp
+          mountPath: /tmp
+        {{ end }}
+        {{ if .Values.debug.enabled }}
+        env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+        - name: OSAC_DEBUG_CONTINUE
+          value: {{ .Values.debug.continue | default false | quote }}
+        - name: OSAC_DEBUG_LISTEN_ADDRESS
+          value: 127.0.0.1:2345
+        {{ end }}
         command:
-        {{ if .Values.debug }}
-        - dlv
-        - exec
-        - /usr/local/bin/fulfillment-service
-        - --headless
-        - --api-version=2
-        - --listen=:30004
-        - --accept-multiclient
-        - --continue
-        - --
+        {{ if .Values.debug.enabled }}
+        - /usr/local/bin/debug-entrypoint
         {{ else }}
         - /usr/local/bin/fulfillment-service
         {{ end }}
+        args:
         - start
         - event-publisher
         - --log-level={{ .Values.log.level }}
@@ -149,13 +170,12 @@ spec:
         - name: metrics
           containerPort: 8002
           protocol: TCP
-        {{ if .Values.debug }}
+        {{ if .Values.debug.enabled }}
         - name: debug
-          containerPort: 30004
-          hostPort: 30004
+          containerPort: 2345
           protocol: TCP
         {{ end }}
-        {{ if not .Values.debug }}
+        {{ if not .Values.debug.enabled }}
         livenessProbe:
           exec:
             command:

@@ -1,0 +1,4 @@
+# Applied only by install-fulfillment-service when REMOTE_DEBUG=true.
+service:
+  debug:
+    enabled: true

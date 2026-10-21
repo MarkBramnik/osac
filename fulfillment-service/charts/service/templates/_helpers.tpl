@@ -80,3 +80,24 @@ Returns non-empty string for enabled, empty for disabled (for use in {{- if incl
 {{- end -}}
 {{- if $enabled -}}true{{- end -}}
 {{- end }}
+
+{{/*
+Use the separate developer image only for the four Delve-enabled processes.
+*/}}
+{{- define "fulfillment-service.serviceImage" -}}
+{{- $debug := .Values.debug | default dict -}}
+{{- if ($debug.enabled | default false) -}}
+{{- required "debug.image is required when debug.enabled=true" $debug.image -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.images.service.repository .Values.images.service.tag -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "fulfillment-service.serviceImagePullPolicy" -}}
+{{- $debug := .Values.debug | default dict -}}
+{{- if ($debug.enabled | default false) -}}
+{{- $debug.imagePullPolicy | default "IfNotPresent" -}}
+{{- else -}}
+{{- .Values.images.service.pullPolicy -}}
+{{- end -}}
+{{- end -}}

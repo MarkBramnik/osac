@@ -41,12 +41,20 @@ spec:
       app: fulfillment-controller
   replicas: 1
   strategy:
-    type: {{ if .Values.debug }}Recreate{{ else }}RollingUpdate{{ end }}
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ if .Values.debug.enabled }}0{{ else }}"25%"{{ end }}
+      maxUnavailable: {{ if .Values.debug.enabled }}"100%"{{ else }}"25%"{{ end }}
   template:
     metadata:
       labels:
         app: fulfillment-controller
     spec:
+      {{ if .Values.debug.enabled }}
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+      {{ end }}
       volumes:
       - name: cas
         configMap:
@@ -128,10 +136,23 @@ spec:
         configMap:
           name: {{ .Values.vault.caBundle.configMap }}
       {{- end }}
+      {{ if .Values.debug.enabled }}
+      - name: debug-tmp
+        emptyDir: {}
+      {{ end }}
       containers:
       - name: controller
-        image: {{ .Values.images.service.repository }}:{{ .Values.images.service.tag }}
-        imagePullPolicy: {{ .Values.images.service.pullPolicy }}
+        image: {{ include "fulfillment-service.serviceImage" . | quote }}
+        imagePullPolicy: {{ include "fulfillment-service.serviceImagePullPolicy" . }}
+        {{ if .Values.debug.enabled }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - SYS_PTRACE
+        {{ end }}
         volumeMounts:
         - name: cas
           mountPath: /etc/fulfillment-controller/tls/cas
@@ -151,20 +172,28 @@ spec:
         - name: vault-credentials
           mountPath: /etc/fulfillment-controller/vault
           readOnly: true
+        {{ if .Values.debug.enabled }}
+        - name: debug-tmp
+          mountPath: /tmp
+        {{ end }}
+        {{ if .Values.debug.enabled }}
+        env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+        - name: OSAC_DEBUG_CONTINUE
+          value: {{ .Values.debug.continue | default false | quote }}
+        - name: OSAC_DEBUG_LISTEN_ADDRESS
+          value: 127.0.0.1:2345
+        {{ end }}
         command:
-        {{ if .Values.debug }}
-        - dlv
-        - exec
-        - /usr/local/bin/fulfillment-service
-        - --headless
-        - --api-version=2
-        - --listen=:30003
-        - --accept-multiclient
-        - --continue
-        - --
+        {{ if .Values.debug.enabled }}
+        - /usr/local/bin/debug-entrypoint
         {{ else }}
         - /usr/local/bin/fulfillment-service
         {{ end }}
+        args:
         - start
         - controller
         - --sync={{ if and (hasKey (.Values.controller | default dict) "sync") (ne .Values.controller.sync nil) }}{{ .Values.controller.sync }}{{ else }}true{{ end }}
@@ -205,13 +234,12 @@ spec:
         - name: metrics
           containerPort: 8002
           protocol: TCP
-        {{ if .Values.debug }}
+        {{ if .Values.debug.enabled }}
         - name: debug
-          containerPort: 30003
-          hostPort: 30003
+          containerPort: 2345
           protocol: TCP
         {{ end }}
-        {{ if not .Values.debug }}
+        {{ if not .Values.debug.enabled }}
         livenessProbe:
           exec:
             command:

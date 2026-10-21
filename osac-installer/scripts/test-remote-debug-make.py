@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Dry-run contracts for focused operator debug installation."""
+"""Dry-run contracts for focused remote-debug installation targets."""
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
 import subprocess
-
+from pathlib import Path
 
 INSTALLER = Path(__file__).resolve().parents[1]
 
@@ -124,6 +123,94 @@ def test_disable_debug_restores_normal_profile_without_building() -> None:
     assert "--skip-schema-validation" not in output
 
 
+def test_kind_fulfillment_debug_builds_and_loads_one_shared_image() -> None:
+    output = dry_run(
+        "install-fulfillment-service",
+        "PLATFORM=kind",
+        "PROFILE=dev",
+        "NS=osac",
+        "REMOTE_DEBUG=true",
+        "FULFILLMENT_VALUES_FILE=values/custom-osac.yaml",
+        "EXTRA_HELM_ARGS=--set=metering.enabled=false",
+    )
+    assert "image-build-debug" in output
+    assert "kind-runtime.sh load image-archive" in output
+    assert "image-push-debug" not in output
+    assert "localhost/fulfillment-service:latest-debug" in output
+    assert "-f values/dev/kind-instance.yaml" in output
+    assert '-f "values/custom-osac.yaml"' in output
+    assert "-f \"values/remote-debug-fulfillment.yaml\"" in output
+    assert "--set=metering.enabled=false" in output
+    assert "--set service.debug.enabled=false" not in output
+    assert "--set service.debug.enabled=true" not in output
+    assert "--set service.debug.continue=false" in output
+    assert "--set service.debug.imagePullPolicy=IfNotPresent" in output
+    assert "--set-string service.debug.image=localhost/fulfillment-service:latest-debug" in output
+    assert "--reuse-values" not in output
+    assert "--no-hooks" in output
+    assert "--skip-schema-validation" not in output
+
+
+def test_openshift_fulfillment_debug_cross_builds_pushes_and_checks_scc() -> None:
+    image = "registry.example.test/osac/fulfillment-service:dev-debug"
+    output = dry_run(
+        "install-fulfillment-service",
+        "PLATFORM=openshift",
+        "PROFILE=vmaas-ci",
+        "NS=osac",
+        "REMOTE_DEBUG=true",
+        f"REMOTE_DEBUG_IMAGE={image}",
+        "IMAGE_PLATFORM=linux/amd64",
+        "FULFILLMENT_DOMAIN=apps.example.test",
+        "DEBUG_CONTINUE=false",
+    )
+    assert "IMAGE_PLATFORM=\"linux/amd64\"" in output
+    assert f'podman push "{image}"' in output or f'docker push "{image}"' in output
+    assert "-f values/vmaas-ci/instance.yaml" in output
+    assert "-f \"values/remote-debug-fulfillment.yaml\"" in output
+    assert "service.externalHostname=fulfillment-api-osac.apps.example.test" in output
+    assert "service.internalHostname=fulfillment-internal-api-osac.apps.example.test" in output
+    assert "--no-hooks" in output
+    assert "--set service.debug.enabled=false" not in output
+    assert "--set service.debug.enabled=true" not in output
+    assert "--set service.debug.continue=false" in output
+    assert "--set service.debug.imagePullPolicy=Always" in output
+    assert f"--set-string service.debug.image={image}" in output
+    assert "run 'make enable-debug' first" in output
+    assert 'kubectl get scc "osac-remote-debug"' in output
+    assert output.index("remote-debug SCC is not enabled") < output.index(
+        "image-build-debug"
+    )
+
+
+def test_fulfillment_debug_defaults_to_paused_and_restores_normal_image() -> None:
+    debug_output = dry_run(
+        "install-fulfillment-service",
+        "PLATFORM=kind",
+        "PROFILE=dev",
+        "NS=osac",
+        "REMOTE_DEBUG=true",
+    )
+    assert "-f \"values/remote-debug-fulfillment.yaml\"" in debug_output
+    assert "--set service.debug.continue=false" in debug_output
+
+    normal_output = dry_run(
+        "install-fulfillment-service",
+        "PLATFORM=kind",
+        "PROFILE=dev",
+        "NS=osac",
+        "REMOTE_DEBUG=false",
+    )
+    assert "-f values/dev/kind-instance.yaml" in normal_output
+    assert "-f \"values/remote-debug-fulfillment.yaml\"" not in normal_output
+    assert "--set service.debug.enabled=false" in normal_output
+    assert "image-build-debug" not in normal_output
+    assert "image-push-debug" not in normal_output
+    assert "--reuse-values" not in normal_output
+    assert "--no-hooks" in normal_output
+    assert "--skip-schema-validation" not in normal_output
+
+
 def test_enable_debug_needs_no_deployment_arguments() -> None:
     output = dry_run("enable-debug")
     assert "/apis/security.openshift.io/v1" in output
@@ -156,6 +243,9 @@ def main() -> None:
     test_openshift_cross_builds_and_pushes_explicit_image()
     test_kind_operator_debug_includes_dev_full_values_and_overrides()
     test_disable_debug_restores_normal_profile_without_building()
+    test_kind_fulfillment_debug_builds_and_loads_one_shared_image()
+    test_openshift_fulfillment_debug_cross_builds_pushes_and_checks_scc()
+    test_fulfillment_debug_defaults_to_paused_and_restores_normal_image()
     test_enable_debug_needs_no_deployment_arguments()
     test_disable_debug_checks_pods_before_uninstall()
     print("remote-debug Make contracts passed")
