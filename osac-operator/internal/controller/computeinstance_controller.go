@@ -1103,6 +1103,12 @@ func (r *ComputeInstanceReconciler) handleDesiredConfigVersion(ctx context.Conte
 // absent or unknown condition vouches for nothing yet, and the record waits for it to become
 // explicitly false before it can confirm anything.
 func recordRunningConfig(instance *v1alpha1.ComputeInstance) {
+	recordRunningConfigAt(instance, time.Now().UTC())
+}
+
+// recordRunningConfigAt records the observation at a supplied time, keeping the
+// state transition deterministic in tests.
+func recordRunningConfigAt(instance *v1alpha1.ComputeInstance, observedAt time.Time) {
 	restart, present := restartRequired(instance)
 	switch {
 	case present && restart == metav1.ConditionTrue:
@@ -1127,7 +1133,7 @@ func recordRunningConfig(instance *v1alpha1.ComputeInstance) {
 	if !instance.IsStatusConditionTrue(v1alpha1.ComputeInstanceConditionConfigurationApplied) {
 		return
 	}
-	since := metav1.NewTime(time.Now().UTC())
+	since := metav1.NewTime(observedAt.UTC())
 	instance.Status.RunningConfigVersion = instance.Status.DesiredConfigVersion
 	instance.Status.RunningInstanceTypeName = label
 	instance.Status.RunningConfigSince = &since

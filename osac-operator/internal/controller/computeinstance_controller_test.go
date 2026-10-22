@@ -444,11 +444,12 @@ var _ = Describe("ComputeInstance Controller", func() {
 			instance.Labels[osacComputeInstanceTypeNameLabel] = "standard-8-32-compatible"
 			// ...but the resources are identical, so the config version is unchanged.
 
-			recordRunningConfig(instance)
+			observedAt := oldSince.Time.Add(time.Second)
+			recordRunningConfigAt(instance, observedAt)
 
 			Expect(instance.Status.RunningConfigVersion).To(Equal(instance.Status.DesiredConfigVersion))
 			Expect(instance.Status.RunningInstanceTypeName).To(Equal("standard-8-32-compatible"))
-			Expect(instance.Status.RunningConfigSince.Time).To(BeTemporally(">", oldSince.Time))
+			Expect(instance.Status.RunningConfigSince.Time).To(Equal(observedAt))
 		})
 	})
 

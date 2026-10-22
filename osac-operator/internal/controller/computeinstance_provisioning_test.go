@@ -594,21 +594,22 @@ var _ = Describe("ComputeInstance running config", func() {
 
 	It("records the version and time when the new configuration is running", func() {
 		instance := runningInstance(osacv1alpha1.ComputeInstancePhaseRunning, true, false)
-		previous := instance.Status.RunningConfigSince.Time
+		observedAt := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
 
-		recordRunningConfig(instance)
+		recordRunningConfigAt(instance, observedAt)
 
 		Expect(instance.Status.RunningConfigVersion).To(Equal("v2"))
 		Expect(instance.Status.RunningConfigSince).ToNot(BeNil())
-		Expect(instance.Status.RunningConfigSince.Time).ToNot(Equal(previous))
+		Expect(instance.Status.RunningConfigSince.Time).To(Equal(observedAt))
 	})
 
 	It("does not re-record while the running configuration is unchanged", func() {
 		instance := runningInstance(osacv1alpha1.ComputeInstancePhaseRunning, true, false)
-		recordRunningConfig(instance)
+		observedAt := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+		recordRunningConfigAt(instance, observedAt)
 		recorded := instance.Status.RunningConfigSince.Time
 
-		recordRunningConfig(instance)
+		recordRunningConfigAt(instance, observedAt.Add(time.Second))
 
 		Expect(instance.Status.RunningConfigVersion).To(Equal("v2"))
 		Expect(instance.Status.RunningConfigSince.Time).To(Equal(recorded))
@@ -635,9 +636,9 @@ var _ = Describe("ComputeInstance running config", func() {
 	It("invalidates the observation when a restart becomes required after it", func() {
 		instance := runningInstance(osacv1alpha1.ComputeInstancePhaseRunning, true, false)
 		instance.Labels = map[string]string{osacComputeInstanceTypeNameLabel: "standard-8-32"}
-		recordRunningConfig(instance)
+		firstObservation := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+		recordRunningConfigAt(instance, firstObservation)
 		Expect(instance.Status.RunningConfigVersion).To(Equal("v2"))
-		recorded := instance.Status.RunningConfigSince.Time
 
 		// KubeVirt reports RestartRequired asynchronously, so the requirement can
 		// surface only after the observation was recorded.
@@ -645,7 +646,7 @@ var _ = Describe("ComputeInstance running config", func() {
 			osacv1alpha1.ComputeInstanceConditionRestartRequired,
 			metav1.ConditionTrue, "", osacv1alpha1.ReasonAsExpected)
 
-		recordRunningConfig(instance)
+		recordRunningConfigAt(instance, firstObservation.Add(time.Second))
 
 		Expect(instance.Status.RunningConfigVersion).To(Equal(""))
 		Expect(instance.Status.RunningInstanceTypeName).To(Equal(""))
@@ -657,12 +658,13 @@ var _ = Describe("ComputeInstance running config", func() {
 			osacv1alpha1.ComputeInstanceConditionRestartRequired,
 			metav1.ConditionFalse, "", osacv1alpha1.ReasonAsExpected)
 
-		recordRunningConfig(instance)
+		secondObservation := firstObservation.Add(2 * time.Second)
+		recordRunningConfigAt(instance, secondObservation)
 
 		Expect(instance.Status.RunningConfigVersion).To(Equal("v2"))
 		Expect(instance.Status.RunningInstanceTypeName).To(Equal("standard-8-32"))
 		Expect(instance.Status.RunningConfigSince).ToNot(BeNil())
-		Expect(instance.Status.RunningConfigSince.Time).ToNot(Equal(recorded))
+		Expect(instance.Status.RunningConfigSince.Time).To(Equal(secondObservation))
 	})
 
 	It("moves the stamp when the instance type name changes with identical resources", func() {
@@ -672,17 +674,18 @@ var _ = Describe("ComputeInstance running config", func() {
 		// type bills from the observation.
 		instance := runningInstance(osacv1alpha1.ComputeInstancePhaseRunning, true, false)
 		instance.Labels = map[string]string{osacComputeInstanceTypeNameLabel: "standard-8-32"}
-		recordRunningConfig(instance)
-		recorded := instance.Status.RunningConfigSince.Time
+		firstObservation := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+		recordRunningConfigAt(instance, firstObservation)
 		Expect(instance.Status.RunningInstanceTypeName).To(Equal("standard-8-32"))
 
 		instance.Labels[osacComputeInstanceTypeNameLabel] = "standard-8-32-flavored"
 
-		recordRunningConfig(instance)
+		secondObservation := firstObservation.Add(time.Second)
+		recordRunningConfigAt(instance, secondObservation)
 
 		Expect(instance.Status.RunningConfigVersion).To(Equal("v2"))
 		Expect(instance.Status.RunningInstanceTypeName).To(Equal("standard-8-32-flavored"))
-		Expect(instance.Status.RunningConfigSince.Time).ToNot(Equal(recorded))
+		Expect(instance.Status.RunningConfigSince.Time).To(Equal(secondObservation))
 	})
 
 	It("does not record while the instance is not running", func() {

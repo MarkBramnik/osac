@@ -2000,12 +2000,16 @@ var _ = Describe("Storage Controller", func() {
 			)
 
 			// provider="lvms" → should find the secret
-			found, err := r.hubSecretExists(ctx, name, "lvms")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeTrue(), "expected hub secret to be found when filtering by provider=lvms")
+			// The reconciler reads through the manager cache, so wait for the direct
+			// API-client create above to become visible before checking the filters.
+			Eventually(func(g Gomega) {
+				found, err := r.hubSecretExists(ctx, name, "lvms")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(found).To(BeTrue(), "expected hub secret to be found when filtering by provider=lvms")
+			}, 5*time.Second, 10*time.Millisecond).Should(Succeed())
 
 			// provider="vast" → should NOT find the secret (wrong provider)
-			found, err = r.hubSecretExists(ctx, name, "vast")
+			found, err := r.hubSecretExists(ctx, name, "vast")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeFalse(), "expected hub secret NOT to be found when filtering by provider=vast")
 
