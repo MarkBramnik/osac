@@ -19,7 +19,7 @@ variant: kind
 # on production deployments.
 debug:
   enabled: false
-  continue: false
+  continue: true # Continue at startup unless explicitly paused for IDE attach.
   image: ""
   imagePullPolicy: IfNotPresent
 

@@ -712,6 +712,10 @@
               ],
               "default": "IfNotPresent"
             },
+            "rolloutToken": {
+              "type": "string",
+              "description": "Developer-only token that forces a new OSAC Operator Pod rollout"
+            },
             "resources": {
               "type": "object"
             }
@@ -1155,7 +1159,7 @@
             },
             "continue": {
               "type": "boolean",
-              "default": false
+              "default": true
             },
             "image": {
               "type": "string"
@@ -1164,6 +1168,10 @@
               "type": "string",
               "enum": ["Always", "IfNotPresent", "Never"],
               "default": "IfNotPresent"
+            },
+            "rolloutToken": {
+              "type": "string",
+              "description": "Developer-only token that forces the selected Fulfillment Pod rollouts"
             }
           },
           "required": ["enabled", "continue", "image", "imagePullPolicy"],

@@ -13,8 +13,9 @@ VERSION ?=
 # the mono-repo root, not fulfillment-service/ alone -- matches
 # publish-image.yaml's `context: .`, `file: fulfillment-service/Containerfile`.
 .PHONY: image-build
-image-build: ## Build container image.
-	$(CONTAINER_TOOL) build -t ${IMG} -f ${CONTAINERFILE} --build-arg VERSION=$(VERSION) ..
+image-build: ## Build container image for IMAGE_PLATFORM.
+	$(CONTAINER_TOOL) build $(if $(strip $(IMAGE_PLATFORM)),--platform=$(IMAGE_PLATFORM)) \
+		-t "$(IMG)" -f "$(CONTAINERFILE)" --build-arg VERSION="$(VERSION)" ..
 
 .PHONY: image-push
 image-push: ## Push container image.

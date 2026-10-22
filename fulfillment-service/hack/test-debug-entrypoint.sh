@@ -17,7 +17,7 @@ export PATH="${tmpdir}/bin:${PATH}"
 export OSAC_DEBUG_TEST_ARGS="${tmpdir}/args"
 export OSAC_DEBUGGER_BIN="${tmpdir}/bin/dlv"
 
-OSAC_DEBUG_CONTINUE=true OSAC_DEBUG_LISTEN_ADDRESS=127.0.0.1:2345 \
+OSAC_DEBUG_CONTINUE=true OSAC_DEBUG_LISTEN_ADDRESS=0.0.0.0:2345 \
 	"${ENTRYPOINT}" start grpc-server --log-level=debug
 grep -Fxq -- '--continue' "${OSAC_DEBUG_TEST_ARGS}"
 grep -Fxq -- '--accept-multiclient' "${OSAC_DEBUG_TEST_ARGS}"
@@ -27,6 +27,10 @@ grep -Fxq -- '/usr/local/bin/fulfillment-service' "${OSAC_DEBUG_TEST_ARGS}"
 grep -Fxq -- 'start' "${OSAC_DEBUG_TEST_ARGS}"
 grep -Fxq -- 'grpc-server' "${OSAC_DEBUG_TEST_ARGS}"
 grep -Fxq -- '--log-level=debug' "${OSAC_DEBUG_TEST_ARGS}"
+
+OSAC_DEBUG_CONTINUE= "${ENTRYPOINT}" start rest-gateway
+grep -Fxq -- '--continue' "${OSAC_DEBUG_TEST_ARGS}"
+grep -Fxq -- '--accept-multiclient' "${OSAC_DEBUG_TEST_ARGS}"
 
 OSAC_DEBUG_CONTINUE=false "${ENTRYPOINT}" start controller
 if grep -Fxq -- '--continue' "${OSAC_DEBUG_TEST_ARGS}"; then

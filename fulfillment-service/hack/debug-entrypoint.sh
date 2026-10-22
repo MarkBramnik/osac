@@ -1,8 +1,9 @@
 #!/bin/sh
 set -eu
 
-debug_continue=${OSAC_DEBUG_CONTINUE:-false}
-debug_listen=${OSAC_DEBUG_LISTEN_ADDRESS:-127.0.0.1:2345}
+debug_continue=${OSAC_DEBUG_CONTINUE:-true}
+# Delve's unauthenticated API is restricted to IPv4 loopback.
+debug_listen=127.0.0.1:2345
 debugger=${OSAC_DEBUGGER_BIN:-/usr/local/bin/dlv}
 program=${FULFILLMENT_SERVICE_BIN:-/usr/local/bin/fulfillment-service}
 

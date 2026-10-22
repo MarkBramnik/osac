@@ -32,6 +32,10 @@ spec:
     metadata:
       labels:
         app: fulfillment-rest-gateway
+      {{ if .Values.debug.rolloutToken }}
+      annotations:
+        kubectl.kubernetes.io/restartedAt: {{ .Values.debug.rolloutToken | quote }}
+      {{ end }}
     spec:
       {{ if .Values.debug.enabled }}
       securityContext:
@@ -78,9 +82,7 @@ spec:
         - name: TMPDIR
           value: /tmp
         - name: OSAC_DEBUG_CONTINUE
-          value: {{ .Values.debug.continue | default false | quote }}
-        - name: OSAC_DEBUG_LISTEN_ADDRESS
-          value: 127.0.0.1:2345
+          value: {{ .Values.debug.continue | quote }}
         {{ end }}
         command:
         {{ if .Values.debug.enabled }}

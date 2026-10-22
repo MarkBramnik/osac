@@ -1,9 +1,9 @@
 # Remote-debug image targets are separate from routine component build rules.
 
-REMOTE_DEBUG_HOST_ARCH := $(shell uname -m)
-ifneq ($(filter arm64 aarch64,$(REMOTE_DEBUG_HOST_ARCH)),)
+DEBUG_HOST_ARCH := $(shell uname -m)
+ifneq ($(filter arm64 aarch64,$(DEBUG_HOST_ARCH)),)
 IMAGE_PLATFORM ?= linux/arm64
-else ifneq ($(filter x86_64 amd64,$(REMOTE_DEBUG_HOST_ARCH)),)
+else ifneq ($(filter x86_64 amd64,$(DEBUG_HOST_ARCH)),)
 IMAGE_PLATFORM ?= linux/amd64
 else
 IMAGE_PLATFORM ?= unsupported

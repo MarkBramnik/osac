@@ -9,13 +9,17 @@ import subprocess
 from pathlib import Path
 
 import yaml
+from remote_debug_helm_args import build_helm_args
 
 INSTALLER = Path(__file__).resolve().parents[1]
 CHART = INSTALLER / "charts/osac"
 DEFAULT_VALUES = CHART / "ci/default-values.yaml"
+FULFILLMENT_CHART_VALUES = (
+    INSTALLER.parent / "fulfillment-service/charts/service/values.yaml"
+)
 DEBUG_IMAGE = "registry.example.test/osac-operator:dev-debug"
 FULFILLMENT_DEBUG_IMAGE = "registry.example.test/fulfillment-service:dev-debug"
-FULFILLMENT_DEBUG_VALUES = INSTALLER / "values/remote-debug-fulfillment.yaml"
+ROLLOUT_TOKEN = "2026-10-22T12:34:56.123456Z"
 
 
 def render(*overrides: str) -> list[dict]:
@@ -101,7 +105,9 @@ def test_debug_image_overrides_are_not_wizard_controls() -> None:
     operator_schema = schema["properties"]["operator"]
     operator_debug_schema = operator_schema["patternProperties"]["^debug$"]
     assert operator_debug_schema["properties"]["enabled"]["default"] is False
+    assert operator_debug_schema["properties"]["continue"]["default"] is True
     assert "image" not in operator_debug_schema["required"]
+    assert operator_debug_schema["properties"]["rolloutToken"]["type"] == "string"
     values = yaml.safe_load((CHART / "values.yaml").read_text(encoding="utf-8"))
     assert "debug" not in values["operator"]
 
@@ -110,11 +116,13 @@ def test_debug_image_overrides_are_not_wizard_controls() -> None:
     assert "debug" not in service_properties
     debug_schema = service_schema["patternProperties"]["^debug$"]
     assert debug_schema["properties"]["enabled"]["default"] is False
-    assert debug_schema["properties"]["continue"]["default"] is False
-    debug_overlay = yaml.safe_load(
-        FULFILLMENT_DEBUG_VALUES.read_text(encoding="utf-8")
+    assert debug_schema["properties"]["continue"]["default"] is True
+    assert debug_schema["properties"]["rolloutToken"]["type"] == "string"
+    assert "debug" not in values["service"]
+    fulfillment_values = yaml.safe_load(
+        FULFILLMENT_CHART_VALUES.read_text(encoding="utf-8")
     )
-    assert debug_overlay["service"]["debug"]["enabled"] is True
+    assert fulfillment_values["debug"]["continue"] is True
 
 
 def test_normal_umbrella_render_uses_normal_image() -> None:
@@ -140,6 +148,8 @@ def test_debug_upgrade_only_changes_operator_manager() -> None:
         "operator.debug.imagePullPolicy=Always",
         "--set-string",
         f"operator.debug.image={DEBUG_IMAGE}",
+        "--set-string",
+        f"operator.debug.rolloutToken={ROLLOUT_TOKEN}",
     )
     manager_deployment, manager = operator_manager(docs)
     pod_spec = manager_deployment["spec"]["template"]["spec"]
@@ -159,12 +169,75 @@ def test_debug_upgrade_only_changes_operator_manager() -> None:
     assert {"name": "debug-tmp", "mountPath": "/tmp"} in manager["volumeMounts"]
     env = {item["name"]: item.get("value") for item in manager["env"]}
     assert env["OSAC_DEBUG_CONTINUE"] == "false"
+    assert "OSAC_DEBUG_LISTEN_ADDRESS" not in env
+    assert manager_deployment["spec"]["template"]["metadata"]["annotations"][
+        "kubectl.kubernetes.io/restartedAt"
+    ] == ROLLOUT_TOKEN
 
     proxy = console_proxy(docs)
     assert proxy["image"] == "ghcr.io/osac-project/osac-operator:latest"
     assert "livenessProbe" in proxy
     assert "readinessProbe" in proxy
     assert "SYS_PTRACE" not in proxy["securityContext"]["capabilities"].get("add", [])
+
+
+def test_combined_services_debug_render_validates_without_skipping_schema() -> None:
+    helm_args = build_helm_args(
+        services_value="osac-operator,fulfillment-service",
+        debug_value="true",
+        platform="openshift",
+        debug_continue_value="false",
+        fulfillment_debug_continue_value="false",
+        osac_operator_image=DEBUG_IMAGE,
+        fulfillment_service_image=FULFILLMENT_DEBUG_IMAGE,
+        rollout_token=ROLLOUT_TOKEN,
+    )
+    docs = render(*helm_args)
+    manager_deployment, manager = operator_manager(docs)
+    assert manager["image"] == DEBUG_IMAGE
+    assert "livenessProbe" not in manager
+    assert manager_deployment["spec"]["template"]["metadata"]["annotations"][
+        "kubectl.kubernetes.io/restartedAt"
+    ] == ROLLOUT_TOKEN
+    controller_deployment, controller = deployment_container(
+        docs, "fulfillment-controller", "controller"
+    )
+    assert controller["image"] == FULFILLMENT_DEBUG_IMAGE
+    assert controller["command"] == ["/usr/local/bin/debug-entrypoint"]
+    assert "livenessProbe" not in controller
+    assert controller_deployment["spec"]["template"]["metadata"]["annotations"][
+        "kubectl.kubernetes.io/restartedAt"
+    ] == ROLLOUT_TOKEN
+
+
+def test_selected_normal_images_render_with_debug_disabled() -> None:
+    helm_args = build_helm_args(
+        services_value="osac-operator,fulfillment-service",
+        debug_value="false",
+        platform="kind",
+        debug_continue_value="true",
+        fulfillment_debug_continue_value="false",
+        osac_operator_image="registry.example.test/osac-operator:1.2.3",
+        fulfillment_service_image="registry.example.test/fulfillment-service:1.2.3",
+        rollout_token=ROLLOUT_TOKEN,
+    )
+    docs = render(*helm_args)
+    manager_deployment, manager = operator_manager(docs)
+    assert manager["image"] == "registry.example.test/osac-operator:1.2.3"
+    assert manager["command"] == ["/usr/local/bin/manager"]
+    assert "livenessProbe" in manager
+    assert manager_deployment["spec"]["template"]["metadata"]["annotations"][
+        "kubectl.kubernetes.io/restartedAt"
+    ] == ROLLOUT_TOKEN
+    controller_deployment, controller = deployment_container(
+        docs, "fulfillment-controller", "controller"
+    )
+    assert controller["image"] == "registry.example.test/fulfillment-service:1.2.3"
+    assert controller["command"] == ["/usr/local/bin/fulfillment-service"]
+    assert "livenessProbe" in controller
+    assert controller_deployment["spec"]["template"]["metadata"]["annotations"][
+        "kubectl.kubernetes.io/restartedAt"
+    ] == ROLLOUT_TOKEN
 
 
 def test_normal_fulfillment_deployments_use_normal_image() -> None:
@@ -179,6 +252,9 @@ def test_normal_fulfillment_deployments_use_normal_image() -> None:
         deployment, container = deployment_container(
             docs, deployment_name, container_name
         )
+        assert "kubectl.kubernetes.io/restartedAt" not in deployment[
+            "spec"
+        ]["template"]["metadata"].get("annotations", {})
         assert container["image"] == "ghcr.io/osac-project/fulfillment-service:latest"
         assert container["command"] == ["/usr/local/bin/fulfillment-service"]
         assert "debug" not in [port["name"] for port in container.get("ports", [])]
@@ -194,16 +270,20 @@ def test_normal_fulfillment_deployments_use_normal_image() -> None:
 
 
 def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
-    docs = render(
-        "--values",
-        str(FULFILLMENT_DEBUG_VALUES),
-        "--set",
-        "service.debug.continue=false",
-        "--set",
-        "service.debug.imagePullPolicy=IfNotPresent",
-        "--set-string",
-        f"service.debug.image={FULFILLMENT_DEBUG_IMAGE}",
+    helm_args = build_helm_args(
+        services_value="fulfillment-service",
+        debug_value="true",
+        platform="kind",
+        debug_continue_value="true",
+        fulfillment_debug_continue_value="false",
+        fulfillment_service_image=FULFILLMENT_DEBUG_IMAGE,
+        rollout_token=ROLLOUT_TOKEN,
     )
+    docs = render(*helm_args)
+    operator_deployment, _ = operator_manager(docs)
+    assert "kubectl.kubernetes.io/restartedAt" not in operator_deployment[
+        "spec"
+    ]["template"]["metadata"].get("annotations", {})
     expected = {
         "fulfillment-controller": ("controller", "controller"),
         "fulfillment-grpc-server": ("grpc-server", "grpc-server"),
@@ -214,6 +294,9 @@ def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
         deployment, container = deployment_container(
             docs, deployment_name, container_name
         )
+        assert deployment["spec"]["template"]["metadata"]["annotations"][
+            "kubectl.kubernetes.io/restartedAt"
+        ] == ROLLOUT_TOKEN
         pod_spec = deployment["spec"]["template"]["spec"]
         strategy = deployment["spec"]["strategy"]
         if deployment_name != "fulfillment-event-publisher":
@@ -247,12 +330,15 @@ def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
         assert env["HOME"] == "/tmp"
         assert env["TMPDIR"] == "/tmp"
         assert env["OSAC_DEBUG_CONTINUE"] == "false"
-        assert env["OSAC_DEBUG_LISTEN_ADDRESS"] == "127.0.0.1:2345"
+        assert "OSAC_DEBUG_LISTEN_ADDRESS" not in env
 
     mcp_deployment, mcp = deployment_container(
         docs, "fulfillment-mcp-server", "mcp-server"
     )
     assert mcp_deployment["spec"]["strategy"]["type"] == "RollingUpdate"
+    assert "kubectl.kubernetes.io/restartedAt" not in mcp_deployment[
+        "spec"
+    ]["template"]["metadata"].get("annotations", {})
     assert mcp["image"] == "ghcr.io/osac-project/fulfillment-service:latest"
     assert mcp["command"][0] == "/usr/local/bin/fulfillment-service"
     assert "/usr/local/bin/debug-entrypoint" not in mcp["command"]
@@ -266,7 +352,14 @@ def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
 
 
 def test_fulfillment_debug_disabled_uses_normal_image_and_probes() -> None:
-    docs = render("--set", "service.debug.enabled=false")
+    helm_args = build_helm_args(
+        services_value="",
+        debug_value="false",
+        platform="kind",
+        debug_continue_value="true",
+        fulfillment_debug_continue_value="false",
+    )
+    docs = render(*helm_args)
     _, grpc = deployment_container(docs, "fulfillment-grpc-server", "grpc-server")
     assert grpc["image"] == "ghcr.io/osac-project/fulfillment-service:latest"
     assert grpc["command"] == ["/usr/local/bin/fulfillment-service"]
@@ -276,7 +369,14 @@ def test_fulfillment_debug_disabled_uses_normal_image_and_probes() -> None:
 
 def test_fulfillment_debug_requires_an_image_reference() -> None:
     try:
-        render("--values", str(FULFILLMENT_DEBUG_VALUES))
+        render(
+            "--set",
+            "service.debug.enabled=true",
+            "--set",
+            "service.debug.continue=false",
+            "--set",
+            "service.debug.imagePullPolicy=IfNotPresent",
+        )
     except AssertionError as error:
         assert "image" in str(error)
     else:
@@ -328,6 +428,8 @@ def main() -> None:
     test_debug_image_overrides_are_not_wizard_controls()
     test_normal_umbrella_render_uses_normal_image()
     test_debug_upgrade_only_changes_operator_manager()
+    test_combined_services_debug_render_validates_without_skipping_schema()
+    test_selected_normal_images_render_with_debug_disabled()
     test_normal_fulfillment_deployments_use_normal_image()
     test_fulfillment_debug_upgrade_changes_only_four_processes()
     test_fulfillment_debug_disabled_uses_normal_image_and_probes()

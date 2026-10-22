@@ -17,7 +17,7 @@ workstation. It does not install duplicate Deployments or create a Service or
 Route for Delve.
 
 The normal operator image does not contain or run Delve. The debug image is
-selected only when `REMOTE_DEBUG=true` is passed to the focused installer target.
+selected only when `DEBUG=true` is passed to the focused installer target.
 
 ## 2. Architecture and configuration
 
@@ -36,8 +36,9 @@ The Containerfile has separate normal and debug build stages:
 See the [operator Containerfile](../../../osac-operator/Containerfile) and
 [debug entrypoint](../../../osac-operator/hack/debug-entrypoint.sh).
 
-The debug Pod starts the entrypoint, which `exec`s Delve as PID 1. Delve listens
-on `127.0.0.1:2345` inside the manager container and launches
+The debug Pod starts the entrypoint, which `exec`s Delve as PID 1. Both debug
+images pin Delve to IPv4 loopback, `127.0.0.1:2345`, inside the container; the
+listen address cannot be overridden. Delve launches
 `/usr/local/bin/manager-debug` as its debuggee. `DEBUG_CONTINUE=true` continues
 the manager immediately; `DEBUG_CONTINUE=false` leaves it paused until the IDE
 attaches. The console proxy remains on the normal image.
@@ -51,20 +52,24 @@ IDE -> 127.0.0.1:<localPort> -> kubectl/oc port-forward
 
 Delve's API is unauthenticated, so it is bound to loopback in the Pod and exposed
 only through port-forwarding. Do not expose it with a Service or Route.
+`oc port-forward --address 127.0.0.1` restricts the workstation-side listener;
+it does not control the address used by the cluster-side port-forward backend.
+That backend is outside these image entrypoints.
 
 ### Fulfillment service image and processes
 
 The Fulfillment service has one image shared by the controller, gRPC server,
 REST gateway, and event publisher. The `runtime-debug` Containerfile target adds
 the pinned Delve version and a debug entrypoint; the service binary is built
-without optimizations or inlining. `install-fulfillment-service` builds and
-pushes or loads this one image, then enables `service.debug.enabled` for those four
+without optimizations or inlining. `build-fulfillment-service` builds and pushes
+or loads this one image; `install-services` enables `service.debug.enabled` for those four
 existing Deployments. MCP, console-proxy, and ingress-proxy containers are not
 debug-wrapped.
 
-Each selected Pod runs Delve on `127.0.0.1:2345`. The Pods have separate network
-namespaces, so they can use the same Pod-side port. No `hostPort`, Service, or
-Route is added. When `DEBUG_CONTINUE=false`, each process waits for an IDE attach;
+Each selected Pod runs Delve on IPv4 loopback, `127.0.0.1:2345`. The Pods have
+separate network namespaces, so they can use the same Pod-side port. No
+`hostPort`, Service, or Route is added. When `DEBUG_CONTINUE=false`, each
+process waits for an IDE attach;
 the Fulfillment target uses this as its default. All four processes are debugged
 at once, so APIs, controller reconciliation, and event publishing may pause.
 Use a development environment.
@@ -85,13 +90,13 @@ image reference is preserved and selected again when debug is disabled.
 
 The operator and Fulfillment developer-only `debug` objects are accepted by
 narrowly matched `patternProperties` rules, not ordinary `properties` entries,
-so they do not add Wizard controls. Both focused targets use the selected
-profile values, optional component-specific values files, and
-`EXTRA_HELM_ARGS`; debug image and runtime settings are passed as command-line
-overrides. They retain normal Helm schema validation and do not reuse stored
-release values. The focused upgrades suppress hooks so unrelated AAP bootstrap
-and template-publishing jobs aren't rerun. The full `install-osac` workflow
-retains its normal hook behavior.
+so they do not add Wizard controls. The component image-build targets do not
+use Helm. The single `install-services` target uses selected profile values,
+optional values files, and `EXTRA_HELM_ARGS`, then upgrades the existing
+umbrella release once with the requested debug settings. It retains normal Helm
+schema validation and suppresses hooks so unrelated AAP bootstrap and
+template-publishing jobs aren't rerun. The full `install-osac` workflow retains
+its normal hook behavior.
 
 The separate SCC chart has no user-configurable values. It creates the
 cluster-scoped SCC `osac-remote-debug` and is installed as Helm release
@@ -175,135 +180,175 @@ The targets are defined in
 
 | Target | Purpose |
 |---|---|
-| `install-osac-operator` | Upgrade the operator in the existing `osac` Helm release. |
-| `install-fulfillment-service` | Upgrade the four Delve-enabled Fulfillment Deployments in the existing `osac` release. |
+| `build-osac-operator` | Build a normal or Delve-enabled operator image; push by default. No Helm or cluster access. |
+| `build-fulfillment-service` | Build a normal or shared Delve-enabled Fulfillment image; push by default. No Helm or cluster access. |
+| `install-services` | Apply selected component images/debug settings in one upgrade of the existing `osac` Helm release. |
 | `enable-debug` | Install the OpenShift remote-debug SCC Helm release. |
 | `disable-debug` | Remove that SCC release after checking for active Pods using it. |
-| `image-build-debug` | Build the Delve-enabled image for the selected platform. |
-| `image-push-debug` | Push the debug image tag. |
-| `test-debug-entrypoint` | Check Delve startup behavior for both continue modes. |
-| `remote-debug-make-test` | Check focused installer Make workflows without a cluster. |
-| `remote-debug-render-test` | Check normal/debug chart renders and SCC policy. |
+| `remote-debug-make-test` | Check image and install Make workflows without a cluster. |
+| `remote-debug-render-test` | Check normal, combined-debug chart renders and SCC policy. |
 
-### `install-fulfillment-service` variables and examples
+### Image build and push variables
 
-This target uses the same required `PLATFORM`, `PROFILE`, and `NS` values as
-`install-osac-operator`, and requires an existing `osac` release. It builds one
-image for all four debugged processes.
+The build targets select the normal image when `DEBUG=false` and the
+Delve-enabled image when `DEBUG=true`. They do not install anything.
 
 | Variable | Meaning |
 |---|---|
-| `REMOTE_DEBUG` | `true` builds/selects the debug image; `false` restores the normal service image and chart behavior. Defaults to `false`. |
-| `REMOTE_DEBUG_IMAGE` | Optional debug image reference. Kind defaults to `localhost/fulfillment-service:latest-debug`; OpenShift requires an explicit registry reference. |
-| `FULFILLMENT_VALUES_FILE` | Optional custom values overlay, applied after the selected profile values. |
-| `EXTRA_HELM_ARGS` | Existing command-line overrides, applied before debug-specific image settings. |
-| `IMAGE_PLATFORM` | `linux/amd64` or `linux/arm64`; defaults to the host architecture. |
-| `DEBUG_CONTINUE` | `false` pauses the service processes until attach; `true` starts them immediately. Fulfillment defaults to `false`. |
-| `CONTAINER_TOOL` | `docker` or `podman`; the installer selects an available tool if omitted. Log in to the registry with that tool before an OpenShift push. |
+| `DEBUG` | `true` builds the debug image; `false` builds the normal image. Defaults to `false`. |
+| `PUSH` | Push the image after building. Defaults to `true`; set `false` for local builds. When pushing, supply the component's image reference. |
+| `IMAGE_PLATFORM` | Target architecture, e.g. `linux/amd64` or `linux/arm64`; defaults to the host architecture. |
+| `CONTAINER_TOOL` | `docker` or `podman`; defaults to the installer-selected tool. |
+| `OSAC_OPERATOR_IMAGE` | Operator image reference. Overrides the matching entry in the home config; required for a selected build when `PUSH=true`. |
+| `FULFILLMENT_SERVICE_IMAGE` | Fulfillment image reference. Overrides the matching entry in the home config; required for a selected build when `PUSH=true`. |
 
-OpenShift example for an x86 cluster:
+With `PUSH=false`, the build goals use local tags by default:
+`localhost/osac-operator:latest[-debug]` and
+`localhost/fulfillment-service:latest[-debug]`. Kind can load these during
+`install-services`. An OpenShift cluster must be able to pull the image, so use
+and push a registry reference there.
 
-```bash
-export KUBECONFIG=/path/to/openshift.kubeconfig
-make -C osac-installer enable-debug
-make -C osac-installer install-fulfillment-service \
-  PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
-  REMOTE_DEBUG=true \
-  REMOTE_DEBUG_IMAGE=quay.io/<your-org>/fulfillment-service:dev-debug \
-  IMAGE_PLATFORM=linux/amd64 DEBUG_CONTINUE=false
+`install-services` builds selected images by default (`BUILD=true`). It resolves
+each image reference from the command line first, then from
+`~/.config/osac/image-mappings.json`. The optional JSON file keeps separate
+normal and debug references, so switching `DEBUG` selects the corresponding
+image set:
+
+```json
+{
+  "version": 1,
+  "images": {
+    "normal": {
+      "osac-operator": "quay.io/<your-org>/osac-operator:dev",
+      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev"
+    },
+    "debug": {
+      "osac-operator": "quay.io/<your-org>/osac-operator:dev-debug",
+      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev-debug"
+    }
+  }
+}
 ```
 
-The target builds and pushes the image once. Kind builds and loads the image
-locally and does not need the SCC:
+Use `IMAGE_CONFIG=/path/to/file.json` to select a different config file. A
+command-line image variable overrides only that component's value; the other
+component can still use its config entry. With `BUILD=false`, no image is built
+or pushed. `DEBUG_CONTINUE` and `FULFILLMENT_DEBUG_CONTINUE` affect runtime
+startup behavior, not the image build.
 
-```bash
-make -C osac-installer install-fulfillment-service \
-  PLATFORM=kind PROFILE=dev NS=osac REMOTE_DEBUG=true
-```
-
-When finished, run the target with `REMOTE_DEBUG=false`; it omits the debug
-overlay and restores the normal profile image/settings. On OpenShift, remove the
-shared debug SCC only after no debug Pods use it:
-
-```bash
-make -C osac-installer install-fulfillment-service \
-  PLATFORM=openshift PROFILE=vmaas-ci NS=osac REMOTE_DEBUG=false
-make -C osac-installer disable-debug
-```
-
-### `install-osac-operator` variables
-
-This target requires an existing `osac` release and the same `PROFILE` and
-namespace used for that installation. It re-renders the umbrella chart from
-profile values, `OPERATOR_VALUES_FILE` if supplied, and `EXTRA_HELM_ARGS`; pass
-the same custom values used for the original installation to avoid resetting
-those settings to profile defaults.
-
-| Variable | Meaning |
-|---|---|
-| `PLATFORM` | Required: `kind` or `openshift`. Kind loads the image locally; OpenShift pushes it to the registry. |
-| `PROFILE` | Required installer profile, such as `dev` or `vmaas-ci`. |
-| `NS` | Required namespace containing the existing `osac` release. |
-| `REMOTE_DEBUG` | `true` builds/selects the debug image; `false` restores normal settings from the selected profile and values overlays. Defaults to `false`. |
-| `REMOTE_DEBUG_IMAGE` | Debug image reference. Required for OpenShift when debugging; Kind defaults to `localhost/osac-operator:latest-debug`. |
-| `OPERATOR_VALUES_FILE` | Optional custom values overlay, applied after selected profile values. |
-| `EXTRA_HELM_ARGS` | Additional Helm overrides, applied before operator debug-specific settings. |
-| `IMAGE_PLATFORM` | `linux/amd64` or `linux/arm64`; defaults to the host architecture. Use `linux/amd64` to cross-build for x86 from an ARM Mac. |
-| `DEBUG_CONTINUE` | `true` continues the manager at startup; `false` waits for an IDE attach. Defaults to `true`. |
-| `CONTAINER_TOOL` | `docker` or `podman`; the installer selects an available tool if omitted. Log in to the registry with the same tool before an OpenShift push. |
-
-The operator-level image targets can also be used directly:
-
-```bash
-make -C osac-operator image-build-debug \
-  CONTAINER_TOOL=podman IMAGE_PLATFORM=linux/amd64 \
-  DEBUG_IMG=quay.io/<your-org>/osac-operator:dev-debug
-
-make -C osac-operator image-push-debug \
-  CONTAINER_TOOL=podman DEBUG_IMG=quay.io/<your-org>/osac-operator:dev-debug
-```
-
-`image-build-debug` defaults to the host architecture and Podman; its platform
-must be `linux/amd64` or `linux/arm64`. `image-push-debug` pushes the selected
-`DEBUG_IMG` tag.
-
-For OpenShift, set `KUBECONFIG` to the intended cluster before running the
-installer target. If it is unset, the main installer may select a profile's
-Kind kubeconfig.
-
-Example OpenShift debug install for an x86 cluster:
+Example: build and push both debug images for an x86 OpenShift cluster. Log in
+with the same container tool before building:
 
 ```bash
 export KUBECONFIG=/path/to/openshift.kubeconfig
 make -C osac-installer enable-debug
 
-make -C osac-installer install-osac-operator \
+make -C osac-installer build-osac-operator \
+  DEBUG=true IMAGE_PLATFORM=linux/amd64 \
+  OSAC_OPERATOR_IMAGE=quay.io/<your-org>/osac-operator:dev-debug
+make -C osac-installer build-fulfillment-service \
+  DEBUG=true IMAGE_PLATFORM=linux/amd64 \
+  FULFILLMENT_SERVICE_IMAGE=quay.io/<your-org>/fulfillment-service:dev-debug
+```
+
+Normal images can also be built independently, including for a non-native
+platform:
+
+```bash
+make -C osac-installer build-osac-operator \
+  DEBUG=false PUSH=false IMAGE_PLATFORM=linux/amd64
+```
+
+### Install selected services in one Helm upgrade
+
+`install-services` is the only focused target that upgrades the `osac` service
+release; `enable-debug` and `disable-debug` manage the separate SCC release. It
+performs one upgrade of the existing umbrella release, with normal schema
+validation and `--no-hooks`. `SERVICES` is a comma-separated set of components
+whose image/mode you want to apply. With `DEBUG=true`, each listed
+component uses its debug image; components not listed return to profile defaults.
+With `DEBUG=false`, debug mode is disabled and listed normal image
+references override the profile when supplied. The list should describe the full
+debug set you intend to leave enabled.
+
+Use the same profile and custom values as the existing release. Because Helm
+renders the whole umbrella release, omitted custom values can still revert to
+profile defaults; `install-services` does not use stored release values.
+
+`install-services` generates one fresh UTC timestamp per invocation and applies
+it to each selected service's `kubectl.kubernetes.io/restartedAt` pod-template
+annotation. This forces a rollout even if an image was rebuilt and pushed under
+the same tag, and it also applies with `BUILD=false`. Selecting
+`fulfillment-service` updates the annotation on all four Fulfillment Deployments;
+selecting `osac-operator` updates the manager Deployment. The Fulfillment event
+publisher uses a `Recreate` strategy, so it stops before its replacement starts.
+Rollouts terminate existing debugger sessions; in debug mode, `CONTINUE=false`
+leaves the replacement processes waiting for IDE attach again.
+
+| Variable | Meaning |
+|---|---|
+| `PLATFORM`, `PROFILE`, `NS` | Required deployment platform, existing installer profile, and namespace containing the `osac` release. |
+| `SERVICES` | Comma-separated component set: `osac-operator`, `fulfillment-service`, or both. When debugging, treat this as the complete set to leave in debug mode. |
+| `DEBUG` | `true` enables debug for every listed service; `false` disables debug and selects normal images. Defaults to `false`. |
+| `OSAC_OPERATOR_IMAGE` | Tagged operator image reference. Required for the operator when debugging on OpenShift; optional normal-image override otherwise. |
+| `FULFILLMENT_SERVICE_IMAGE` | Tagged shared Fulfillment image reference. Required for Fulfillment when debugging on OpenShift; optional normal-image override otherwise. |
+| `OPERATOR_VALUES_FILE`, `FULFILLMENT_VALUES_FILE` | Optional umbrella-chart values overlays applied after the selected profile. |
+| `EXTRA_HELM_ARGS` | Additional umbrella-chart Helm overrides, applied before debug settings. |
+| `BUILD` | Automatically build the listed services before the upgrade. Defaults to `true`; use `false` when the images are already built. |
+| `PUSH` | When `BUILD=true`, push built images. Defaults to `true`; `PUSH=false` is for local Kind images and is rejected for OpenShift builds. |
+| `IMAGE_PLATFORM` | Forwarded to each selected build target, e.g. `linux/amd64` or `linux/arm64`. |
+| `CONTAINER_TOOL` | Container tool forwarded to the selected build targets. |
+| `IMAGE_CONFIG` | Optional alternate JSON config path. Defaults to `~/.config/osac/image-mappings.json`. |
+| `CONTINUE` | Sets both runtime continue flags. Defaults to `true`, so all selected processes start without waiting for IDE attach. |
+| `DEBUG_CONTINUE` | Operator behavior: `true` continues at startup; `false` waits for IDE attach. Defaults to `CONTINUE` (`true`). |
+| `FULFILLMENT_DEBUG_CONTINUE` | Fulfillment behavior: `true` continues at startup; `false` waits for IDE attach. Defaults to `CONTINUE` (`true`). |
+
+The build targets remain available for standalone builds. When invoked through
+`install-services`, `BUILD`, `PUSH`, `IMAGE_PLATFORM`, and `CONTAINER_TOOL` are
+forwarded to the selected build targets; `CONTINUE` and its component-specific
+forms configure runtime behavior in Helm. Explicit `OSAC_OPERATOR_IMAGE` and
+`FULFILLMENT_SERVICE_IMAGE` values override the matching mode entry in the JSON
+config, and the resolved references are used for both the build and upgrade.
+
+For OpenShift, install the SCC first. Then build, push, and apply both debug
+images in one invocation. The image references can come from the JSON config;
+explicit variables override them:
+
+```bash
+make -C osac-installer install-services \
   PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
-  REMOTE_DEBUG=true \
-  REMOTE_DEBUG_IMAGE=quay.io/<your-org>/osac-operator:dev-debug \
+  DEBUG=true SERVICES=osac-operator,fulfillment-service \
   IMAGE_PLATFORM=linux/amd64
 ```
 
-For OpenShift, the target builds and pushes the image automatically; registry
-login and push permission are required. For Kind, the target builds and loads
-the image into the cluster and does not push it.
-
-For Kind, no SCC is needed:
+For Kind, the same target loads the local images into the cluster before the
+single Helm upgrade. No registry references are required for this local build:
 
 ```bash
-make -C osac-installer install-osac-operator \
-  PLATFORM=kind PROFILE=dev NS=osac REMOTE_DEBUG=true
-```
-
-To leave the manager paused until the IDE attaches:
-
-```bash
-make -C osac-installer install-osac-operator \
-  PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
-  REMOTE_DEBUG=true DEBUG_CONTINUE=false \
-  REMOTE_DEBUG_IMAGE=quay.io/<your-org>/osac-operator:dev-debug \
+make -C osac-installer install-services \
+  PLATFORM=kind PROFILE=dev NS=osac \
+  BUILD=true PUSH=false DEBUG=true \
+  SERVICES=osac-operator,fulfillment-service \
   IMAGE_PLATFORM=linux/amd64
 ```
+
+To use already-built images, set `BUILD=false`. On Kind, the referenced image
+must already be available to the local container tool so the target can load it.
+On OpenShift, the image must be pullable by the cluster. To restore profile
+normal images without rebuilding them:
+
+```bash
+make -C osac-installer install-services \
+  PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
+  BUILD=false DEBUG=false SERVICES=osac-operator,fulfillment-service
+```
+
+`CONTINUE` defaults to `true`, so the operator and all four Fulfillment
+processes start immediately. Set `CONTINUE=false` to pause all selected debug
+processes, or use `DEBUG_CONTINUE` and `FULFILLMENT_DEBUG_CONTINUE` to override
+them independently. `BUILD`, `PUSH`, and `IMAGE_PLATFORM` are also accepted by
+`install-services` and are forwarded to the selected build targets. Remove the
+SCC only after no debug Pods use it.
 
 ### OpenShift SCC lifecycle
 
@@ -324,11 +369,9 @@ To finish debugging, restore normal mode for every component being debugged,
 then remove the SCC:
 
 ```bash
-make -C osac-installer install-osac-operator \
-  PLATFORM=openshift PROFILE=vmaas-ci NS=osac REMOTE_DEBUG=false
-make -C osac-installer install-fulfillment-service \
-  PLATFORM=openshift PROFILE=vmaas-ci NS=osac REMOTE_DEBUG=false
-
+make -C osac-installer install-services \
+  PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
+  BUILD=false DEBUG=false SERVICES=osac-operator,fulfillment-service
 make -C osac-installer disable-debug
 ```
 
@@ -402,7 +445,7 @@ kubectl rollout restart deployment/osac-operator -n osac
 | OpenShift debugging uses the separate Helm-managed `osac-remote-debug` SCC release. | The Pod requests `SYS_PTRACE` and unconfined seccomp; the SCC allows these while continuing to deny privileged containers and host access. Its current `system:serviceaccounts` grant is cluster-wide and must be treated as temporary. |
 | Only the manager changes; the console-proxy Deployment remains on the normal image with its regular probes. | The supported debugging scope is the operator manager, not the console proxy. |
 
-The operator's regular behavior is restored by setting `REMOTE_DEBUG=false` in
+The operator's regular behavior is restored by setting `DEBUG=false` in
 the focused upgrade; that skips the debug image build/push and restores the
 regular manager command, probes, ServiceAccount, and leader election. On
 OpenShift, remove the temporary SCC afterward with
@@ -416,7 +459,7 @@ OpenShift, remove the temporary SCC afterward with
 | Delve listens on `127.0.0.1:2345`; only a `containerPort` is declared. No `hostPort`, Service, or Route is added. | `debug-me` uses authenticated Pod port-forwarding to reach Delve's unauthenticated API. |
 | Probes are omitted in debug mode. The controller, gRPC server, and REST gateway retain `RollingUpdate` but use `maxSurge: 0` and `maxUnavailable: 100%`; the event publisher remains `Recreate`. | Debug rollouts stop old Pods before creating replacements, preventing overlapping Delve sessions without changing the strategy type on existing Deployments. |
 | Debug containers request `SYS_PTRACE`, use unconfined seccomp, mount writable `/tmp`, and set `HOME`/`TMPDIR` there. Existing read-only root filesystems and dropped capabilities are retained where configured. | Delve needs tracing permissions and temporary writable storage; OpenShift admits these settings only with the temporary debug SCC. |
-| `DEBUG_CONTINUE=false` is the Fulfillment target default; set it to `true` to start all four processes immediately. | Paused processes wait for IDE attach, but the service APIs, controller, and event publisher are unavailable until resumed. |
+| `CONTINUE=true` is the default for the operator and all four Fulfillment processes; set `CONTINUE=false` or the component-specific flag to pause for IDE attach. | Paused processes wait for IDE attach, but the service APIs, controller, and event publisher are unavailable until resumed. |
 
 Run the four `debug-me` entries independently. Each uses Pod-side port `2345`;
 the provided config assigns local ports `2346`–`2349` so all tunnels can be open

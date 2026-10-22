@@ -14,12 +14,12 @@ not include or run Delve.
 ## 2. Architecture and configuration
 
 With debug enabled, the target container runs Delve as PID 1. Delve launches the
-unoptimized Go process and listens on `127.0.0.1:2345` inside the Pod. The
-developer connects through a local port-forward; no Service or Route exposes
-Delve. The installer updates the existing `osac` Helm release rather than
-creating duplicate Deployments. Fulfillment uses one shared debug image for its
-four supported Deployments; its debug-only values overlay enables
-`service.debug.enabled`, and `DEBUG_CONTINUE=false` pauses them until IDE attach.
+unoptimized Go process and listens on IPv4 loopback (`127.0.0.1:2345`) inside the
+Pod. The developer connects through a local port-forward; no Service or Route exposes
+Delve. One `install-services` invocation updates the existing `osac` Helm
+release rather than creating duplicate Deployments. Fulfillment uses one shared
+debug image for its four supported Deployments. `CONTINUE=true` is the default;
+set `CONTINUE=false` to pause the selected processes until IDE attach.
 
 The `debug-me` helper uses a target entry in `debug-config.yaml`; its source
 mapping lets VS Code map local files to the paths recorded in the debug binary:
@@ -36,9 +36,10 @@ targets:
 ```
 
 Fulfillment's developer-only `debug` object is validated through
-`patternProperties`, not exposed as an Enclave Wizard control. The focused Make
-target conditionally applies `values/remote-debug-fulfillment.yaml`; don't
-toggle debug from the Wizard.
+`patternProperties`, not exposed as an Enclave Wizard control. The image build
+targets do not invoke Helm; `install-services` applies the selected image and
+debug settings for all requested components in one upgrade. Don't toggle debug
+from the Wizard.
 
 For Fulfillment, `debug-me` has one entry per Deployment/container. Each Delve
 listener uses Pod port `2345`; the local config assigns workstation ports
@@ -48,69 +49,61 @@ listener uses Pod port `2345`; the local config assigns workstation ports
 
 ### OpenShift
 
-Set the kubeconfig for the target cluster and log in to the registry with the
-container tool you use, then install the temporary SCC and enable the debug
-image:
+Set the target kubeconfig, log in to your registry, and install the temporary
+SCC before enabling debug:
 
 ```bash
 export KUBECONFIG=/path/to/openshift.kubeconfig
 make -C osac-installer enable-debug
-make -C osac-installer install-osac-operator \
-  PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
-  REMOTE_DEBUG=true \
-  REMOTE_DEBUG_IMAGE=quay.io/<your-org>/osac-operator:dev-debug \
-  IMAGE_PLATFORM=linux/amd64
 
-make -C osac-installer install-fulfillment-service \
+make -C osac-installer install-services \
   PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
-  REMOTE_DEBUG=true DEBUG_CONTINUE=false \
-  REMOTE_DEBUG_IMAGE=quay.io/<your-org>/fulfillment-service:dev-debug \
-  IMAGE_PLATFORM=linux/amd64
+  DEBUG=true SERVICES=osac-operator,fulfillment-service \
+  OSAC_OPERATOR_IMAGE=quay.io/<your-org>/osac-operator:dev-debug \
+  FULFILLMENT_SERVICE_IMAGE=quay.io/<your-org>/fulfillment-service:dev-debug \
+  IMAGE_PLATFORM=linux/amd64 CONTINUE=false
 ```
 
-The install targets build and push the image. Fulfillment builds one shared
-image for its four supported processes. `IMAGE_PLATFORM` selects `linux/amd64`
-or `linux/arm64`; use `linux/amd64` to build for an x86 cluster from an ARM Mac.
-`DEBUG_CONTINUE=false` leaves the operator manager or Fulfillment processes
-paused until attach.
+`install-services` builds and pushes the selected images by default, then
+performs one upgrade of the existing `osac` release with normal schema
+validation and hooks suppressed. Image references can instead be stored in
+`~/.config/osac/image-mappings.json`; explicit image variables override
+those entries. Use the same profile and custom values as the existing release.
+`SERVICES` is the complete set of components to debug; components omitted from
+it return to profile values.
+Each selected service is forced through a rollout on every invocation, even if
+the pushed image reuses its previous tag. Selecting `fulfillment-service` rolls
+all four of its Deployments and disconnects existing IDE sessions.
 
-When finished, restore normal mode for each component you debugged, then remove
-the SCC. To restore both:
+When finished, restore normal mode and remove the SCC only after no debug Pods
+use it:
 
 ```bash
-make -C osac-installer install-osac-operator \
-  PLATFORM=openshift PROFILE=vmaas-ci NS=osac REMOTE_DEBUG=false
-make -C osac-installer install-fulfillment-service \
-  PLATFORM=openshift PROFILE=vmaas-ci NS=osac REMOTE_DEBUG=false
+make -C osac-installer install-services \
+  PLATFORM=openshift PROFILE=vmaas-ci NS=osac BUILD=false DEBUG=false \
+  SERVICES=osac-operator,fulfillment-service
 make -C osac-installer disable-debug
 ```
 
-The SCC is cluster-scoped. `enable-debug` installs Helm release
-`osac-debug-scc`, which creates `osac-remote-debug`; it currently permits all
-service accounts in all namespaces to request `SYS_PTRACE` and unconfined
-seccomp. Use it only temporarily where that broad scope is acceptable.
-`disable-debug` refuses to remove it while non-terminal Pods still use the
-managed or legacy debug SCC.
-
-The same SCC supports the Fulfillment debug profile. Use
-`install-fulfillment-service` to enable or disable it; the command builds and
-pushes one shared image on OpenShift, or builds and loads it for Kind.
-
 ### Kind
 
-Kind does not need the SCC targets:
+Kind does not need the SCC or a registry push. The target builds to local
+default tags and loads the images before the single upgrade:
 
 ```bash
-make -C osac-installer install-osac-operator \
-  PLATFORM=kind PROFILE=dev NS=osac REMOTE_DEBUG=true
+make -C osac-installer install-services \
+  PLATFORM=kind PROFILE=dev NS=osac \
+  BUILD=true PUSH=false DEBUG=true \
+  SERVICES=osac-operator,fulfillment-service
 ```
 
-Fulfillment uses the same platform/profile/namespace flags and defaults to
-waiting for the IDE before continuing the four processes:
+`install-services` loads the local images into Kind before its single Helm
+upgrade. Normal images can also be built without debug, including for a
+non-native architecture:
 
 ```bash
-make -C osac-installer install-fulfillment-service \
-  PLATFORM=kind PROFILE=dev NS=osac REMOTE_DEBUG=true
+make -C osac-installer build-fulfillment-service \
+  DEBUG=false PUSH=false IMAGE_PLATFORM=linux/amd64
 ```
 
 ## 4. `debug-me` usage

@@ -1,32 +1,59 @@
-# Focused remote debugging is kept outside the main installer Makefile. These
-# targets update the existing umbrella release rather than adding Deployments.
-# Operator and Fulfillment debug values use developer-only patternProperties,
-# so Helm validates focused upgrades without adding Wizard controls.
-ALL_TARGETS += install-osac-operator install-fulfillment-service
+# Build/push images independently or with install-services; one focused target
+# upgrades the shared OSAC release.
+ALL_TARGETS += install-services
 
-REMOTE_DEBUG ?= false
-DEBUG_CONTINUE ?= true
-REMOTE_DEBUG_IMAGE ?=
-OPERATOR_DEBUG_IMAGE ?= $(if $(filter kind,$(PLATFORM)),localhost/osac-operator:latest-debug,)
-FULFILLMENT_DEBUG_IMAGE ?= $(if $(filter kind,$(PLATFORM)),localhost/fulfillment-service:latest-debug,)
-FULFILLMENT_DEBUG_CONTINUE ?= $(if $(filter command line environment,$(origin DEBUG_CONTINUE)),$(DEBUG_CONTINUE),false)
-FULFILLMENT_VALUES_FILE ?=
+DEBUG ?= false
+BUILD ?= true
+PUSH ?= true
+CONTINUE ?= true
+DEBUG_CONTINUE ?= $(CONTINUE)
+FULFILLMENT_DEBUG_CONTINUE ?= $(CONTINUE)
+SERVICES ?=
+OSAC_OPERATOR_IMAGE ?=
+FULFILLMENT_SERVICE_IMAGE ?=
+IMAGE_CONFIG ?= $(HOME)/.config/osac/image-mappings.json
 OPERATOR_VALUES_FILE ?=
-FULFILLMENT_DEBUG_VALUES := values/remote-debug-fulfillment.yaml
+FULFILLMENT_VALUES_FILE ?=
 FULFILLMENT_DOMAIN ?= $(shell oc get ingresses.config/cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
-ifneq ($(filter install-fulfillment-service,$(MAKECMDGOALS)),)
-REMOTE_DEBUG_IMAGE_EFFECTIVE = $(if $(strip $(REMOTE_DEBUG_IMAGE)),$(REMOTE_DEBUG_IMAGE),$(FULFILLMENT_DEBUG_IMAGE))
-else
-REMOTE_DEBUG_IMAGE_EFFECTIVE = $(if $(strip $(REMOTE_DEBUG_IMAGE)),$(REMOTE_DEBUG_IMAGE),$(OPERATOR_DEBUG_IMAGE))
+
+# Make exports command-line variables automatically; explicitly export the
+# makefile defaults too so the resolver sees the same values as this target.
+export BUILD DEBUG FULFILLMENT_SERVICE_IMAGE IMAGE_CONFIG OSAC_OPERATOR_IMAGE PLATFORM PUSH SERVICES
+
+comma := ,
+empty :=
+space := $(empty) $(empty)
+SERVICE_NAMES := $(strip $(subst $(comma),$(space),$(SERVICES)))
+
+# Resolve config/CLI image references at parse time so the same values can be
+# passed to selected build goals, Kind image loading, and the Helm upgrade.
+ifneq ($(filter install-services,$(MAKECMDGOALS)),)
+shell_quote = '$(subst ','"'"',$(1))'
+# A fresh pod-template annotation forces selected Deployments to recreate pods
+# even when the image reference has not changed.
+INSTALL_ROLLOUT_TOKEN := $(shell python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"))')
+REMOTE_DEBUG_IMAGE_FIELDS := $(shell IMAGE_CONFIG=$(call shell_quote,$(IMAGE_CONFIG)) python3 scripts/remote_debug_image_config.py --make-vars)
+CONFIG_NORMAL_OPERATOR_IMAGE := $(patsubst normal-operator=%,%,$(filter normal-operator=%,$(REMOTE_DEBUG_IMAGE_FIELDS)))
+CONFIG_DEBUG_OPERATOR_IMAGE := $(patsubst debug-operator=%,%,$(filter debug-operator=%,$(REMOTE_DEBUG_IMAGE_FIELDS)))
+CONFIG_NORMAL_FULFILLMENT_IMAGE := $(patsubst normal-fulfillment=%,%,$(filter normal-fulfillment=%,$(REMOTE_DEBUG_IMAGE_FIELDS)))
+CONFIG_DEBUG_FULFILLMENT_IMAGE := $(patsubst debug-fulfillment=%,%,$(filter debug-fulfillment=%,$(REMOTE_DEBUG_IMAGE_FIELDS)))
+RESOLVED_OSAC_OPERATOR_IMAGE := $(if $(strip $(OSAC_OPERATOR_IMAGE)),$(OSAC_OPERATOR_IMAGE),$(if $(filter true,$(DEBUG)),$(CONFIG_DEBUG_OPERATOR_IMAGE),$(CONFIG_NORMAL_OPERATOR_IMAGE)))
+RESOLVED_FULFILLMENT_SERVICE_IMAGE := $(if $(strip $(FULFILLMENT_SERVICE_IMAGE)),$(FULFILLMENT_SERVICE_IMAGE),$(if $(filter true,$(DEBUG)),$(CONFIG_DEBUG_FULFILLMENT_IMAGE),$(CONFIG_NORMAL_FULFILLMENT_IMAGE)))
+ifeq ($(RESOLVED_OSAC_OPERATOR_IMAGE),-)
+RESOLVED_OSAC_OPERATOR_IMAGE :=
+endif
+ifeq ($(RESOLVED_FULFILLMENT_SERVICE_IMAGE),-)
+RESOLVED_FULFILLMENT_SERVICE_IMAGE :=
+endif
 endif
 
-ifeq ($(REMOTE_DEBUG),true)
-ifneq ($(filter install-osac-operator,$(MAKECMDGOALS)),)
-ifneq ($(filter install-fulfillment-service,$(MAKECMDGOALS)),)
-$(error Run operator and Fulfillment remote-debug installs separately; each needs a different REMOTE_DEBUG_IMAGE)
-endif
-endif
-endif
+OSAC_OPERATOR_LOCAL_IMAGE = $(if $(filter true,$(DEBUG)),localhost/osac-operator:latest-debug,localhost/osac-operator:latest)
+FULFILLMENT_SERVICE_LOCAL_IMAGE = $(if $(filter true,$(DEBUG)),localhost/fulfillment-service:latest-debug,localhost/fulfillment-service:latest)
+OSAC_OPERATOR_IMAGE_EFFECTIVE = $(if $(strip $(OSAC_OPERATOR_IMAGE)),$(OSAC_OPERATOR_IMAGE),$(OSAC_OPERATOR_LOCAL_IMAGE))
+FULFILLMENT_SERVICE_IMAGE_EFFECTIVE = $(if $(strip $(FULFILLMENT_SERVICE_IMAGE)),$(FULFILLMENT_SERVICE_IMAGE),$(FULFILLMENT_SERVICE_LOCAL_IMAGE))
+OSAC_OPERATOR_INSTALL_IMAGE = $(if $(strip $(RESOLVED_OSAC_OPERATOR_IMAGE)),$(RESOLVED_OSAC_OPERATOR_IMAGE),$(if $(and $(filter kind,$(PLATFORM)),$(or $(filter true,$(DEBUG)),$(and $(filter true,$(BUILD)),$(filter false,$(PUSH))))),$(OSAC_OPERATOR_LOCAL_IMAGE)))
+FULFILLMENT_SERVICE_INSTALL_IMAGE = $(if $(strip $(RESOLVED_FULFILLMENT_SERVICE_IMAGE)),$(RESOLVED_FULFILLMENT_SERVICE_IMAGE),$(if $(and $(filter kind,$(PLATFORM)),$(or $(filter true,$(DEBUG)),$(and $(filter true,$(BUILD)),$(filter false,$(PUSH))))),$(FULFILLMENT_SERVICE_LOCAL_IMAGE)))
+
 DEBUG_SCC_RELEASE := osac-debug-scc
 DEBUG_SCC_RELEASE_NAMESPACE := kube-system
 DEBUG_SCC_CHART := charts/osac-debug-scc
@@ -34,79 +61,101 @@ DEBUG_SCC_NAME := osac-remote-debug
 DEBUG_SCC_LEGACY_NAME := osac-operator-debug
 
 # The main installer defaults KUBECONFIG to its profile-specific Kind cluster.
-# These OpenShift-only targets have no PROFILE, so use the caller's kubeconfig
-# or the conventional default instead.
+# SCC-only targets have no PROFILE, so use the caller's kubeconfig or the default.
 enable-debug disable-debug: export KUBECONFIG := $(or $(KUBECONFIG),$(HOME)/.kube/config)
 
-.PHONY: install-osac-operator
-install-osac-operator: ## Update the operator in the existing OSAC release; REMOTE_DEBUG=true builds the debug image.
-	@case "$(REMOTE_DEBUG)" in true|false) ;; \
-		*) echo "ERROR: REMOTE_DEBUG must be true or false" >&2; exit 1 ;; \
+.PHONY: build-osac-operator
+build-osac-operator: ## Build (and by default push) the normal or Delve-enabled operator image.
+	@case "$(DEBUG)" in true|false) ;; \
+		*) echo "ERROR: DEBUG must be true or false" >&2; exit 1 ;; \
+	esac
+	@case "$(PUSH)" in true|false) ;; \
+		*) echo "ERROR: PUSH must be true or false" >&2; exit 1 ;; \
+	esac
+	@if [ "$(PUSH)" = true ] && [ -z "$(OSAC_OPERATOR_IMAGE)" ]; then \
+		echo "ERROR: OSAC_OPERATOR_IMAGE is required when PUSH=true" >&2; exit 1; \
+	fi
+ifeq ($(DEBUG),true)
+	$(MAKE) -C ../osac-operator image-build-debug \
+		DEBUG_IMG="$(OSAC_OPERATOR_IMAGE_EFFECTIVE)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
+		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
+ifeq ($(PUSH),true)
+	$(MAKE) -C ../osac-operator image-push-debug \
+		DEBUG_IMG="$(OSAC_OPERATOR_IMAGE_EFFECTIVE)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)"
+endif
+else
+	$(MAKE) -C ../osac-operator image-build \
+		IMG="$(OSAC_OPERATOR_IMAGE_EFFECTIVE)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
+		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
+ifeq ($(PUSH),true)
+	$(MAKE) -C ../osac-operator image-push \
+		IMG="$(OSAC_OPERATOR_IMAGE_EFFECTIVE)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)"
+endif
+endif
+
+.PHONY: build-fulfillment-service
+build-fulfillment-service: ## Build (and by default push) the normal or Delve-enabled Fulfillment image.
+	@case "$(DEBUG)" in true|false) ;; \
+		*) echo "ERROR: DEBUG must be true or false" >&2; exit 1 ;; \
+	esac
+	@case "$(PUSH)" in true|false) ;; \
+		*) echo "ERROR: PUSH must be true or false" >&2; exit 1 ;; \
+	esac
+	@if [ "$(PUSH)" = true ] && [ -z "$(FULFILLMENT_SERVICE_IMAGE)" ]; then \
+		echo "ERROR: FULFILLMENT_SERVICE_IMAGE is required when PUSH=true" >&2; exit 1; \
+	fi
+ifeq ($(DEBUG),true)
+	$(MAKE) -C ../fulfillment-service image-build-debug \
+		DEBUG_IMG="$(FULFILLMENT_SERVICE_IMAGE_EFFECTIVE)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
+		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
+ifeq ($(PUSH),true)
+	$(MAKE) -C ../fulfillment-service image-push-debug \
+		DEBUG_IMG="$(FULFILLMENT_SERVICE_IMAGE_EFFECTIVE)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)"
+endif
+else
+	$(MAKE) -C ../fulfillment-service image-build \
+		IMG="$(FULFILLMENT_SERVICE_IMAGE_EFFECTIVE)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
+		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
+ifeq ($(PUSH),true)
+	$(MAKE) -C ../fulfillment-service image-push \
+		IMG="$(FULFILLMENT_SERVICE_IMAGE_EFFECTIVE)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)"
+endif
+endif
+
+.PHONY: install-services
+install-services: ## Build selected images by default, force their rollout, then upgrade OSAC once.
+	@case "$(BUILD)" in true|false) ;; \
+		*) echo "ERROR: BUILD must be true or false" >&2; exit 1 ;; \
+	esac
+	@case "$(DEBUG)" in true|false) ;; \
+		*) echo "ERROR: DEBUG must be true or false" >&2; exit 1 ;; \
+	esac
+	@case "$(CONTINUE)" in ''|true|false) ;; \
+		*) echo "ERROR: CONTINUE must be true or false when set" >&2; exit 1 ;; \
 	esac
 	@case "$(DEBUG_CONTINUE)" in true|false) ;; \
 		*) echo "ERROR: DEBUG_CONTINUE must be true or false" >&2; exit 1 ;; \
 	esac
-	@helm status osac --namespace "$(NS)" >/dev/null 2>&1 || { \
-		echo "ERROR: Helm release 'osac' was not found in namespace '$(NS)'. Install OSAC first." >&2; \
-		exit 1; \
-	}
-ifeq ($(PLATFORM),openshift)
-	@if [ -z "$(FULFILLMENT_DOMAIN)" ]; then \
-		echo "ERROR: Could not determine cluster domain. Is oc logged in? Set FULFILLMENT_DOMAIN explicitly if needed." >&2; \
-		exit 1; \
-	fi
-endif
-ifeq ($(and $(filter openshift,$(PLATFORM)),$(filter true,$(REMOTE_DEBUG))),true)
-	@helm status "$(DEBUG_SCC_RELEASE)" --namespace "$(DEBUG_SCC_RELEASE_NAMESPACE)" >/dev/null 2>&1 || { \
-		echo "ERROR: remote-debug SCC is not enabled; run 'make enable-debug' first." >&2; \
-		exit 1; \
-	}
-	@kubectl get scc "$(DEBUG_SCC_NAME)" >/dev/null 2>&1 || { \
-		echo "ERROR: Helm release exists but SCC '$(DEBUG_SCC_NAME)' is missing; run 'make enable-debug'." >&2; \
-		exit 1; \
-	}
-endif
-	rm -rf $(OSAC_CHART)/charts
-	helm --repository-config $(LOCAL_HELM_REPOSITORY_CONFIG) dependency build $(OSAC_CHART)
-	@if [ "$(REMOTE_DEBUG)" = true ] && [ -z "$(REMOTE_DEBUG_IMAGE_EFFECTIVE)" ]; then \
-		echo "ERROR: REMOTE_DEBUG_IMAGE is required when REMOTE_DEBUG=true" >&2; exit 1; \
-	fi
-	@if [ "$(REMOTE_DEBUG)" = true ]; then \
-		$(MAKE) -C ../osac-operator image-build-debug \
-			DEBUG_IMG="$(REMOTE_DEBUG_IMAGE_EFFECTIVE)" \
-			CONTAINER_TOOL="$(CONTAINER_TOOL)" \
-			$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)"); \
-	fi
-ifeq ($(PLATFORM),kind)
-	$(if $(filter true,$(REMOTE_DEBUG)),$(call kind-load-image,$(REMOTE_DEBUG_IMAGE_EFFECTIVE)),@:)
-else
-	@if [ "$(REMOTE_DEBUG)" = true ]; then $(CONTAINER_TOOL) push "$(REMOTE_DEBUG_IMAGE_EFFECTIVE)"; fi
-endif
-	@helm upgrade osac $(OSAC_CHART) \
-		-f $(INSTANCE_VALUES) $(INSTANCE_VALUES_EXTRA) \
-		$(if $(strip $(OPERATOR_VALUES_FILE)),-f "$(OPERATOR_VALUES_FILE)") \
-		--namespace "$(NS)" \
-		--no-hooks \
-		--set-string global.osacDeploymentId=$(NS)/osac \
-		$(if $(filter openshift,$(PLATFORM)),--set service.externalHostname=fulfillment-api-$(NS).$(FULFILLMENT_DOMAIN) --set service.internalHostname=fulfillment-internal-api-$(NS).$(FULFILLMENT_DOMAIN) --set global.clusterDomain=$(FULFILLMENT_DOMAIN) --set ui.auth.oidcIssuerURL=https://keycloak-keycloak.$(FULFILLMENT_DOMAIN)/realms/osac) \
-		$(INSTANCE_HELM_ARGS) \
-		$(EXTRA_HELM_ARGS) \
-		--set operator.debug.enabled=$(REMOTE_DEBUG) \
-		--set operator.debug.continue=$(DEBUG_CONTINUE) \
-		--set operator.debug.fsGroup=$(if $(filter kind,$(PLATFORM)),1001,auto) \
-		--set operator.debug.imagePullPolicy=$(if $(filter kind,$(PLATFORM)),IfNotPresent,Always) \
-		$(if $(filter true,$(REMOTE_DEBUG)),--set-string operator.debug.image=$(REMOTE_DEBUG_IMAGE_EFFECTIVE)) \
-		$(OSAC_HELM_FORCE_CONFLICTS) \
-		--wait --timeout 40m
-
-.PHONY: install-fulfillment-service
-install-fulfillment-service: ## Upgrade from profile values, optionally enabling all four Fulfillment debug Deployments.
-	@case "$(REMOTE_DEBUG)" in true|false) ;; \
-		*) echo "ERROR: REMOTE_DEBUG must be true or false" >&2; exit 1 ;; \
-	esac
 	@case "$(FULFILLMENT_DEBUG_CONTINUE)" in true|false) ;; \
-		*) echo "ERROR: DEBUG_CONTINUE must be true or false" >&2; exit 1 ;; \
+		*) echo "ERROR: FULFILLMENT_DEBUG_CONTINUE must be true or false" >&2; exit 1 ;; \
 	esac
+	@python3 scripts/remote_debug_image_config.py --validate-only
+	@python3 scripts/remote_debug_helm_args.py \
+		--services "$(SERVICES)" --debug "$(DEBUG)" \
+		--platform "$(PLATFORM)" --debug-continue "$(DEBUG_CONTINUE)" \
+		--fulfillment-debug-continue "$(FULFILLMENT_DEBUG_CONTINUE)" \
+		--rollout-token "$(INSTALL_ROLLOUT_TOKEN)" \
+		--osac-operator-image "$(OSAC_OPERATOR_INSTALL_IMAGE)" \
+		--fulfillment-service-image "$(FULFILLMENT_SERVICE_INSTALL_IMAGE)" \
+		--validate-only
 	@helm status osac --namespace "$(NS)" >/dev/null 2>&1 || { \
 		echo "ERROR: Helm release 'osac' was not found in namespace '$(NS)'. Install OSAC first." >&2; \
 		exit 1; \
@@ -117,7 +166,7 @@ ifeq ($(PLATFORM),openshift)
 		exit 1; \
 	fi
 endif
-ifeq ($(and $(filter openshift,$(PLATFORM)),$(filter true,$(REMOTE_DEBUG))),true)
+ifeq ($(and $(PLATFORM),$(filter openshift,$(PLATFORM)),$(filter true,$(DEBUG))),true)
 	@helm status "$(DEBUG_SCC_RELEASE)" --namespace "$(DEBUG_SCC_RELEASE_NAMESPACE)" >/dev/null 2>&1 || { \
 		echo "ERROR: remote-debug SCC is not enabled; run 'make enable-debug' first." >&2; \
 		exit 1; \
@@ -127,38 +176,53 @@ ifeq ($(and $(filter openshift,$(PLATFORM)),$(filter true,$(REMOTE_DEBUG))),true
 		exit 1; \
 	}
 endif
-	rm -rf $(OSAC_CHART)/charts
-	helm --repository-config $(LOCAL_HELM_REPOSITORY_CONFIG) dependency build $(OSAC_CHART)
-ifeq ($(REMOTE_DEBUG),true)
-	@if [ -z "$(REMOTE_DEBUG_IMAGE_EFFECTIVE)" ]; then \
-		echo "ERROR: REMOTE_DEBUG_IMAGE is required when REMOTE_DEBUG=true on OpenShift" >&2; exit 1; \
-	fi
-	$(MAKE) -C ../fulfillment-service image-build-debug \
-		DEBUG_IMG="$(REMOTE_DEBUG_IMAGE_EFFECTIVE)" \
+	@rm -rf $(OSAC_CHART)/charts
+	@helm --repository-config $(LOCAL_HELM_REPOSITORY_CONFIG) dependency build $(OSAC_CHART)
+ifeq ($(BUILD),true)
+ifneq ($(filter osac-operator,$(SERVICE_NAMES)),)
+	$(MAKE) --no-print-directory build-osac-operator \
+		DEBUG="$(DEBUG)" PUSH="$(PUSH)" \
+		OSAC_OPERATOR_IMAGE="$(RESOLVED_OSAC_OPERATOR_IMAGE)" \
 		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
 		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
+endif
+ifneq ($(filter fulfillment-service,$(SERVICE_NAMES)),)
+	$(MAKE) --no-print-directory build-fulfillment-service \
+		DEBUG="$(DEBUG)" PUSH="$(PUSH)" \
+		FULFILLMENT_SERVICE_IMAGE="$(RESOLVED_FULFILLMENT_SERVICE_IMAGE)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
+		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
+endif
+endif
 ifeq ($(PLATFORM),kind)
-	$(call kind-load-image,$(REMOTE_DEBUG_IMAGE_EFFECTIVE))
-else
-	$(MAKE) -C ../fulfillment-service image-push-debug \
-		DEBUG_IMG="$(REMOTE_DEBUG_IMAGE_EFFECTIVE)" \
-		CONTAINER_TOOL="$(CONTAINER_TOOL)"
+ifneq ($(filter osac-operator,$(SERVICE_NAMES)),)
+	$(if $(strip $(OSAC_OPERATOR_INSTALL_IMAGE)),$(call kind-load-image,$(OSAC_OPERATOR_INSTALL_IMAGE)))
+endif
+ifneq ($(filter fulfillment-service,$(SERVICE_NAMES)),)
+	$(if $(strip $(FULFILLMENT_SERVICE_INSTALL_IMAGE)),$(call kind-load-image,$(FULFILLMENT_SERVICE_INSTALL_IMAGE)))
 endif
 endif
-	@helm upgrade osac $(OSAC_CHART) \
-		-f $(INSTANCE_VALUES) $(INSTANCE_VALUES_EXTRA) \
-		$(if $(strip $(FULFILLMENT_VALUES_FILE)),-f "$(FULFILLMENT_VALUES_FILE)") \
-		$(if $(filter true,$(REMOTE_DEBUG)),-f "$(FULFILLMENT_DEBUG_VALUES)") \
-		--namespace "$(NS)" --create-namespace \
-		--no-hooks \
-		--set-string global.osacDeploymentId=$(NS)/osac \
-		$(if $(filter openshift,$(PLATFORM)),--set service.externalHostname=fulfillment-api-$(NS).$(FULFILLMENT_DOMAIN) --set service.internalHostname=fulfillment-internal-api-$(NS).$(FULFILLMENT_DOMAIN) --set global.clusterDomain=$(FULFILLMENT_DOMAIN) --set ui.auth.oidcIssuerURL=https://keycloak-keycloak.$(FULFILLMENT_DOMAIN)/realms/osac) \
-		$(INSTANCE_HELM_ARGS) \
-		$(EXTRA_HELM_ARGS) \
-		$(if $(filter false,$(REMOTE_DEBUG)),--set service.debug.enabled=false) \
-		$(if $(filter true,$(REMOTE_DEBUG)),--set service.debug.continue=$(FULFILLMENT_DEBUG_CONTINUE) --set service.debug.imagePullPolicy=$(if $(filter kind,$(PLATFORM)),IfNotPresent,Always) --set-string service.debug.image=$(REMOTE_DEBUG_IMAGE_EFFECTIVE)) \
-		$(OSAC_HELM_FORCE_CONFLICTS) \
-		--wait --timeout 40m
+	@helm_helm_args="$(shell python3 scripts/remote_debug_helm_args.py \
+		--services '$(SERVICES)' --debug '$(DEBUG)' \
+		--platform '$(PLATFORM)' --debug-continue '$(DEBUG_CONTINUE)' \
+		--fulfillment-debug-continue '$(FULFILLMENT_DEBUG_CONTINUE)' \
+		--rollout-token '$(INSTALL_ROLLOUT_TOKEN)' \
+		--osac-operator-image '$(OSAC_OPERATOR_INSTALL_IMAGE)' \
+		--fulfillment-service-image '$(FULFILLMENT_SERVICE_INSTALL_IMAGE)' \
+		--helm-args)"; \
+		helm upgrade osac $(OSAC_CHART) \
+			-f $(INSTANCE_VALUES) $(INSTANCE_VALUES_EXTRA) \
+			$(if $(strip $(OPERATOR_VALUES_FILE)),-f "$(OPERATOR_VALUES_FILE)") \
+			$(if $(strip $(FULFILLMENT_VALUES_FILE)),-f "$(FULFILLMENT_VALUES_FILE)") \
+			--namespace "$(NS)" --create-namespace \
+			--no-hooks \
+			--set-string global.osacDeploymentId=$(NS)/osac \
+			$(if $(filter openshift,$(PLATFORM)),--set service.externalHostname=fulfillment-api-$(NS).$(FULFILLMENT_DOMAIN) --set service.internalHostname=fulfillment-internal-api-$(NS).$(FULFILLMENT_DOMAIN) --set global.clusterDomain=$(FULFILLMENT_DOMAIN) --set ui.auth.oidcIssuerURL=https://keycloak-keycloak.$(FULFILLMENT_DOMAIN)/realms/osac) \
+			$(INSTANCE_HELM_ARGS) \
+			$(EXTRA_HELM_ARGS) \
+			$$helm_helm_args \
+			$(OSAC_HELM_FORCE_CONFLICTS) \
+			--wait --timeout 40m
 
 .PHONY: enable-debug
 enable-debug: ## Install the OpenShift remote-debug SCC through its own Helm release.

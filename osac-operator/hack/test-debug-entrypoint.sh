@@ -17,7 +17,7 @@ export PATH="${tmpdir}/bin:${PATH}"
 export OSAC_DEBUG_TEST_ARGS="${tmpdir}/args"
 export OSAC_DEBUGGER_BIN="${tmpdir}/bin/dlv"
 
-OSAC_DEBUG_CONTINUE=true OSAC_DEBUG_LISTEN_ADDRESS=127.0.0.1:2345 \
+OSAC_DEBUG_CONTINUE=true OSAC_DEBUG_LISTEN_ADDRESS=0.0.0.0:2345 \
 	"${ENTRYPOINT}" --leader-elect --metrics-bind-address=:8443
 grep -Fxq -- '--continue' "${OSAC_DEBUG_TEST_ARGS}"
 grep -Fxq -- '--accept-multiclient' "${OSAC_DEBUG_TEST_ARGS}"
@@ -26,6 +26,10 @@ grep -Fxq -- '--listen=127.0.0.1:2345' "${OSAC_DEBUG_TEST_ARGS}"
 grep -Fxq -- '/usr/local/bin/manager-debug' "${OSAC_DEBUG_TEST_ARGS}"
 grep -Fxq -- '--leader-elect' "${OSAC_DEBUG_TEST_ARGS}"
 grep -Fxq -- '--metrics-bind-address=:8443' "${OSAC_DEBUG_TEST_ARGS}"
+
+OSAC_DEBUG_CONTINUE= "${ENTRYPOINT}" --leader-elect
+grep -Fxq -- '--continue' "${OSAC_DEBUG_TEST_ARGS}"
+grep -Fxq -- '--accept-multiclient' "${OSAC_DEBUG_TEST_ARGS}"
 
 OSAC_DEBUG_CONTINUE=false "${ENTRYPOINT}" --leader-elect
 if grep -Fxq -- '--continue' "${OSAC_DEBUG_TEST_ARGS}"; then
