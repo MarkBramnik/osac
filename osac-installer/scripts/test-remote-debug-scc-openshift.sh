@@ -40,7 +40,8 @@ for scc in osac-remote-debug osac-operator-debug; do
 done
 
 TEST_NAMESPACE="${OSAC_DEBUG_SCC_TEST_NAMESPACE:-osac-debug-scc-it-$(date +%s)-$$}"
-TEST_POD="debug-scc-admission-test"
+TEST_PODS=(osac-operator-debug-probe fulfillment-debug-probe)
+TEST_SERVICE_ACCOUNTS=(osac-operator-debug fulfillment-debug)
 TEST_IMAGE="${OSAC_DEBUG_SCC_TEST_IMAGE:-registry.access.redhat.com/ubi10-minimal:1791444565}"
 if [[ ! "${TEST_NAMESPACE}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ || ${#TEST_NAMESPACE} -gt 63 ]]; then
   echo "ERROR: test namespace must be a Kubernetes DNS label of at most 63 characters." >&2
@@ -62,10 +63,12 @@ scc_enable_attempted=false
 cleanup() {
   local result=$?
   trap - EXIT
-  set +e
+	set +e
 	if [[ "${namespace_created}" == "true" ]]; then
-		kubectl delete pod "${TEST_POD}" --namespace "${TEST_NAMESPACE}" \
-			--ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1
+		for pod in "${TEST_PODS[@]}"; do
+			kubectl delete pod "${pod}" --namespace "${TEST_NAMESPACE}" \
+				--ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1
+		done
 	fi
 	if [[ "${scc_enable_attempted}" == "true" ]]; then
 		local release
@@ -91,20 +94,23 @@ trap cleanup EXIT
 
 kubectl create namespace "${TEST_NAMESPACE}"
 namespace_created=true
-kubectl create serviceaccount debug --namespace "${TEST_NAMESPACE}"
+for service_account in "${TEST_SERVICE_ACCOUNTS[@]}"; do
+	kubectl create serviceaccount "${service_account}" --namespace "${TEST_NAMESPACE}"
+done
 
-echo "Installing the managed SCC for system:serviceaccount:${TEST_NAMESPACE}:debug..."
+echo "Installing the managed SCC for the two named debug ServiceAccounts in ${TEST_NAMESPACE}..."
 scc_enable_attempted=true
 make -C "${INSTALLER_DIR}" enable-debug NS="${TEST_NAMESPACE}" KUBECONFIG="${KUBECONFIG}"
 
-echo "Creating a Pod that requires SYS_PTRACE and unconfined seccomp..."
-kubectl apply --namespace "${TEST_NAMESPACE}" -f - <<EOF
+create_probe_pod() {
+  local pod_name="$1" service_account="$2"
+  kubectl apply --namespace "${TEST_NAMESPACE}" -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${TEST_POD}
+  name: ${pod_name}
 spec:
-  serviceAccountName: debug
+  serviceAccountName: ${service_account}
   restartPolicy: Never
   securityContext:
     runAsNonRoot: true
@@ -122,22 +128,36 @@ spec:
         drop: [ALL]
         add: [SYS_PTRACE]
 EOF
+}
 
-kubectl wait --for=condition=Ready "pod/${TEST_POD}" \
-  --namespace "${TEST_NAMESPACE}" --timeout=180s
+for i in "${!TEST_PODS[@]}"; do
+	pod="${TEST_PODS[$i]}"
+	service_account="${TEST_SERVICE_ACCOUNTS[$i]}"
+	echo "Creating ${pod} as ${service_account} with SYS_PTRACE and unconfined seccomp..."
+	create_probe_pod "${pod}" "${service_account}"
+	kubectl wait --for=condition=Ready "pod/${pod}" \
+		--namespace "${TEST_NAMESPACE}" --timeout=180s
 
-assigned_scc="$(kubectl get pod "${TEST_POD}" --namespace "${TEST_NAMESPACE}" \
-  -o jsonpath='{.metadata.annotations.openshift\.io/scc}')"
-if [[ "${assigned_scc}" != "osac-remote-debug" ]]; then
-  echo "ERROR: expected SCC 'osac-remote-debug', Pod was admitted with '${assigned_scc}'." >&2
-  exit 1
+assigned_scc="$(kubectl get pod "${pod}" --namespace "${TEST_NAMESPACE}" \
+		-o jsonpath='{.metadata.annotations.openshift\.io/scc}')"
+	if [[ "${assigned_scc}" != "osac-remote-debug" ]]; then
+		echo "ERROR: expected SCC 'osac-remote-debug', Pod ${pod} was admitted with '${assigned_scc}'." >&2
+		exit 1
+	fi
+done
+
+assigned_users="$(kubectl get scc osac-remote-debug -o jsonpath='{.users[*]}')"
+read -r -a actual_users <<< "${assigned_users}"
+if [[ "${#actual_users[@]}" -ne 2 ]]; then
+	echo "ERROR: expected exactly two named SCC users, got: ${assigned_users}" >&2
+	exit 1
 fi
-
-assigned_user="$(kubectl get scc osac-remote-debug -o jsonpath='{.users[*]}')"
-if [[ "${assigned_user}" != "system:serviceaccount:${TEST_NAMESPACE}:debug" ]]; then
-  echo "ERROR: SCC user grant is not scoped to the test ServiceAccount: ${assigned_user}" >&2
-  exit 1
-fi
+for service_account in "${TEST_SERVICE_ACCOUNTS[@]}"; do
+	expected_user="system:serviceaccount:${TEST_NAMESPACE}:${service_account}"
+	case " ${assigned_users} " in *" ${expected_user} "*) ;; *)
+		echo "ERROR: SCC user grant is missing ${expected_user}: ${assigned_users}" >&2
+		exit 1 ;; esac
+done
 assigned_groups="$(kubectl get scc osac-remote-debug -o jsonpath='{.groups[*]}')"
 if [[ -n "${assigned_groups}" ]]; then
   echo "ERROR: SCC unexpectedly grants access to groups: ${assigned_groups}" >&2
@@ -149,17 +169,25 @@ if disable_output="$(make -C "${INSTALLER_DIR}" disable-debug KUBECONFIG="${KUBE
   echo "ERROR: disable-debug removed the SCC while the test Pod was using it." >&2
   exit 1
 fi
-if [[ "${disable_output}" != *"cannot disable-debug"* ||
-      "${disable_output}" != *"${TEST_NAMESPACE}/${TEST_POD}"* ]]; then
-  echo "ERROR: disable-debug failed for an unexpected reason:" >&2
-  printf '%s\n' "${disable_output}" >&2
-  exit 1
+if [[ "${disable_output}" != *"cannot disable-debug"* ]]; then
+	echo "ERROR: disable-debug failed for an unexpected reason:" >&2
+	printf '%s\n' "${disable_output}" >&2
+	exit 1
 fi
+for pod in "${TEST_PODS[@]}"; do
+	if [[ "${disable_output}" != *"${TEST_NAMESPACE}/${pod}"* ]]; then
+		echo "ERROR: disable-debug did not report active Pod ${TEST_NAMESPACE}/${pod}:" >&2
+		printf '%s\n' "${disable_output}" >&2
+		exit 1
+	fi
+done
 helm status osac-debug-scc --namespace kube-system >/dev/null
 kubectl get scc osac-remote-debug >/dev/null
 
-echo "Deleting the probe Pod, then verifying disable-debug removes the SCC..."
-kubectl delete pod "${TEST_POD}" --namespace "${TEST_NAMESPACE}" --wait=true --timeout=60s
+echo "Deleting the probe Pods, then verifying disable-debug removes the SCC..."
+for pod in "${TEST_PODS[@]}"; do
+	kubectl delete pod "${pod}" --namespace "${TEST_NAMESPACE}" --wait=true --timeout=60s
+done
 make -C "${INSTALLER_DIR}" disable-debug KUBECONFIG="${KUBECONFIG}"
 scc_enable_attempted=false
 

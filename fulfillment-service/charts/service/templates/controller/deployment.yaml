@@ -55,7 +55,7 @@ spec:
       {{ end }}
     spec:
       {{ if .Values.debug.enabled }}
-      serviceAccountName: debug
+      serviceAccountName: fulfillment-debug
       {{ end }}
       {{ if .Values.debug.enabled }}
       securityContext:

@@ -17,12 +17,8 @@ limitations under the License.
 package integration
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net"
-	"net/rpc/jsonrpc"
 	"os"
 	"os/exec"
 	"strconv"
@@ -96,34 +92,20 @@ var _ = Describe("Operator debug image", func() {
 		output, err := runDebugImageCommand(15*time.Second, "kubectl", "get", "pod", podName,
 			"--namespace", namespace, "-o", "jsonpath={.spec.serviceAccountName}")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(strings.TrimSpace(string(output))).To(Equal("debug"))
+		Expect(strings.TrimSpace(string(output))).To(Equal("osac-operator-debug"))
 
 		output, err = runDebugImageCommand(15*time.Second, "kubectl", "get", "pod", podName,
 			"--namespace", namespace, "-o", "jsonpath={.spec.containers[0].image}")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(strings.TrimSpace(string(output))).To(Equal(debugImage))
 
-		By("waiting for Delve's pod-local endpoint to be available through port-forward")
-		localPort, stopPortForward, err := startDebugPortForward(namespace, podName)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(stopPortForward)
-
 		By("attaching to the paused manager and listing its real debuggee thread")
-		var threadCount int
-		var running bool
-		Eventually(func() error {
-			threadCount, running, err = inspectRemoteDebuggee(localPort)
-			if err != nil {
-				return err
-			}
-			if threadCount == 0 {
-				return fmt.Errorf("Delve attached but returned no manager threads")
-			}
-			if running {
-				return fmt.Errorf("manager continued before a debugger requested resume")
-			}
-			return nil
-		}, 30*time.Second, time.Second).Should(Succeed())
+		attachHelper := os.Getenv("OSAC_DEBUG_ATTACH_HELPER")
+		Expect(attachHelper).NotTo(BeEmpty(), "integration-tests supplies the shared Delve attach helper")
+		output, err = runDebugImageCommand(45*time.Second, "python3", attachHelper,
+			"--namespace", namespace, "--pod", podName)
+		Expect(err).NotTo(HaveOccurred(), string(output))
+		Expect(string(output)).To(ContainSubstring("thread(s), paused"))
 	})
 })
 
@@ -140,111 +122,4 @@ func cleanupDebugImageRelease(release, namespace string) {
 		"--wait=true", "--timeout=80s", "--ignore-not-found")
 	Expect(uninstallErr).NotTo(HaveOccurred())
 	Expect(deleteErr).NotTo(HaveOccurred())
-}
-
-func startDebugPortForward(namespace, podName string) (int, func(), error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "kubectl", "port-forward", "--address=127.0.0.1",
-		"--namespace", namespace, "pod/"+podName, ":2345")
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return 0, nil, err
-	}
-	cmd.Stderr = GinkgoWriter
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return 0, nil, err
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	lines := make(chan string, 8)
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			lines <- scanner.Text()
-		}
-		if err := scanner.Err(); err != nil {
-			lines <- err.Error()
-		}
-		close(lines)
-	}()
-
-	stop := func() {
-		cancel()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
-			<-done
-		}
-	}
-	timer := time.NewTimer(30 * time.Second)
-	defer timer.Stop()
-	for {
-		select {
-		case line, ok := <-lines:
-			if !ok {
-				stop()
-				return 0, nil, fmt.Errorf("kubectl port-forward exited before opening a local port")
-			}
-			const prefix = "Forwarding from 127.0.0.1:"
-			if !strings.HasPrefix(line, prefix) {
-				continue
-			}
-			portText, _, _ := strings.Cut(strings.TrimPrefix(line, prefix), " -> ")
-			port, err := strconv.Atoi(portText)
-			if err != nil {
-				stop()
-				return 0, nil, fmt.Errorf("parse port-forward output %q: %w", line, err)
-			}
-			return port, stop, nil
-		case err := <-done:
-			cancel()
-			if err == nil {
-				return 0, nil, fmt.Errorf("kubectl port-forward exited before opening a local port")
-			}
-			return 0, nil, fmt.Errorf("kubectl port-forward exited before opening a local port: %w", err)
-		case <-timer.C:
-			stop()
-			return 0, nil, fmt.Errorf("timed out waiting for kubectl port-forward")
-		}
-	}
-}
-
-func inspectRemoteDebuggee(localPort int) (int, bool, error) {
-	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
-	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
-	if err != nil {
-		return 0, false, err
-	}
-	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return 0, false, err
-	}
-	client := jsonrpc.NewClient(conn)
-	defer client.Close()
-	var stateReply struct {
-		State json.RawMessage
-	}
-	if err := client.Call("RPCServer.State", struct {
-		NonBlocking bool
-	}{NonBlocking: true}, &stateReply); err != nil {
-		return 0, false, err
-	}
-	var state struct {
-		Running bool
-	}
-	if err := json.Unmarshal(stateReply.State, &state); err != nil {
-		return 0, false, err
-	}
-	var reply struct {
-		Threads []json.RawMessage
-	}
-	// Listing threads uses Delve's real headless API and proves both attach and
-	// access to the paused manager process, not just an open TCP listener.
-	if err := client.Call("RPCServer.ListThreads", struct{}{}, &reply); err != nil {
-		return 0, false, err
-	}
-	return len(reply.Threads), state.Running, nil
 }

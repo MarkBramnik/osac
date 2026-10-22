@@ -95,6 +95,7 @@ integration-tests: manifests generate helm-crds ## Run integration tests against
 	$(MAKE) image-build-debug DEBUG_IMG="$(DEBUG_INTEGRATION_IMG)"
 	$(call kind-load-image,$(DEBUG_INTEGRATION_IMG))
 	KIND_CLUSTER="$(KIND_CLUSTER_NAME)" OSAC_OPERATOR_DEBUG_IMAGE="$(DEBUG_INTEGRATION_IMG)" \
+		OSAC_DEBUG_ATTACH_HELPER="$(abspath ../tools/test-debug-attach.py)" \
 		ginkgo run --timeout 30m -v test/integration
 
 .PHONY: lint
@@ -246,6 +247,7 @@ CONTROLLER_TOOLS_VERSION ?= v0.20.0
 ENVTEST_VERSION ?= release-0.19
 
 include $(shell git rev-parse --show-toplevel)/tools/golangci-lint.mk
+KIND_INSTALLER_DIR ?= $(shell git rev-parse --show-toplevel)/osac-installer
 include $(shell git rev-parse --show-toplevel)/osac-installer/scripts/dev-full/kind-load-image.mk
 include make/remote-debug.mk
 

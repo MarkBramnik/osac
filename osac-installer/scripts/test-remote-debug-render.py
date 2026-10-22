@@ -155,10 +155,10 @@ def test_debug_upgrade_only_changes_operator_manager() -> None:
     )
     manager_deployment, manager = operator_manager(docs)
     pod_spec = manager_deployment["spec"]["template"]["spec"]
-    assert pod_spec["serviceAccountName"] == "debug"
+    assert pod_spec["serviceAccountName"] == "osac-operator-debug"
     assert sum(
         item.get("kind") == "ServiceAccount"
-        and item.get("metadata", {}).get("name") == "debug"
+        and item.get("metadata", {}).get("name") == "osac-operator-debug"
         for item in docs
     ) == 1
     assert manager["command"] == ["/usr/local/bin/debug-entrypoint"]
@@ -211,12 +211,24 @@ def test_combined_services_debug_render_validates_without_skipping_schema() -> N
     )
     assert controller["image"] == FULFILLMENT_DEBUG_IMAGE
     assert controller["command"] == ["/usr/local/bin/debug-entrypoint"]
-    assert manager_deployment["spec"]["template"]["spec"]["serviceAccountName"] == "debug"
+    assert manager_deployment["spec"]["template"]["spec"]["serviceAccountName"] == "osac-operator-debug"
     assert sum(
         item.get("kind") == "ServiceAccount"
-        and item.get("metadata", {}).get("name") == "debug"
+        and item.get("metadata", {}).get("name") == "osac-operator-debug"
         for item in docs
     ) == 1
+    assert sum(
+        item.get("kind") == "ServiceAccount"
+        and item.get("metadata", {}).get("name") == "fulfillment-debug"
+        for item in docs
+    ) == 1
+    fulfillment_debug_service_account = next(
+        item
+        for item in docs
+        if item.get("kind") == "ServiceAccount"
+        and item.get("metadata", {}).get("name") == "fulfillment-debug"
+    )
+    assert fulfillment_debug_service_account["automountServiceAccountToken"] is False
     assert "livenessProbe" not in controller
     assert controller_deployment["spec"]["template"]["metadata"]["annotations"][
         "kubectl.kubernetes.io/restartedAt"
@@ -311,7 +323,7 @@ def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
             "kubectl.kubernetes.io/restartedAt"
         ] == ROLLOUT_TOKEN
         pod_spec = deployment["spec"]["template"]["spec"]
-        assert pod_spec["serviceAccountName"] == "debug"
+        assert pod_spec["serviceAccountName"] == "fulfillment-debug"
         strategy = deployment["spec"]["strategy"]
         if deployment_name != "fulfillment-event-publisher":
             assert strategy["type"] == "RollingUpdate"
@@ -348,7 +360,7 @@ def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
 
     assert sum(
         item.get("kind") == "ServiceAccount"
-        and item.get("metadata", {}).get("name") == "debug"
+        and item.get("metadata", {}).get("name") == "fulfillment-debug"
         for item in docs
     ) == 1
 
@@ -382,7 +394,7 @@ def test_fulfillment_debug_disabled_uses_normal_image_and_probes() -> None:
     docs = render(*helm_args)
     assert not any(
         item.get("kind") == "ServiceAccount"
-        and item.get("metadata", {}).get("name") == "debug"
+        and item.get("metadata", {}).get("name") in {"osac-operator-debug", "fulfillment-debug"}
         for item in docs
     )
     _, grpc = deployment_container(docs, "fulfillment-grpc-server", "grpc-server")
@@ -434,7 +446,10 @@ def test_debug_scc_is_scoped_to_the_selected_namespace() -> None:
     assert scc["kind"] == "SecurityContextConstraints"
     assert scc["metadata"]["name"] == "osac-remote-debug"
     assert scc["groups"] == []
-    assert scc["users"] == ["system:serviceaccount:debug-test:debug"]
+    assert scc["users"] == [
+        "system:serviceaccount:debug-test:osac-operator-debug",
+        "system:serviceaccount:debug-test:fulfillment-debug",
+    ]
     assert scc["allowedCapabilities"] == ["SYS_PTRACE"]
     assert scc["requiredDropCapabilities"] == ["ALL"]
     assert scc["seccompProfiles"] == ["runtime/default", "unconfined"]

@@ -524,6 +524,7 @@ ifeq ($(SUITE),fulfillment)
 		IT_DEBUG_NAMESPACE="$(NS)" \
 		IT_DEBUG_CLUSTER_NAME="$(KIND_CLUSTER_NAME)" \
 		IT_DEBUG_EXTRA_HELM_ARGS="--set service.enabled=true --set service.images.service.pullPolicy=Never --set service.controller.sync=false --set global.services.bmaas.enabled=false --set operator.enabled=false --set operator.networkManagers.enabled=true --set global.networking.networkClass.enabled=false" \
+		OSAC_DEBUG_ATTACH_HELPER="$(abspath ../tools/test-debug-attach.py)" \
 		ginkgo run --timeout 20m -v --focus 'Fulfillment debug image' it
 endif
 ifeq ($(SUITE),operator)

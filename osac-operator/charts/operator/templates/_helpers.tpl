@@ -65,7 +65,7 @@ Service account name
 {{- $name := default (include "osac-operator.fullname" .) .Values.serviceAccount.name -}}
 {{- $debugValues := (index .Values "debug") | default dict -}}
 {{- if index $debugValues "enabled" -}}
-debug
+osac-operator-debug
 {{- else -}}
 {{- $name -}}
 {{- end -}}

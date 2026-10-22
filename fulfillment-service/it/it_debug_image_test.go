@@ -17,18 +17,14 @@ under the License.
 package it
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"net/rpc/jsonrpc"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2/dsl/core"
@@ -77,7 +73,7 @@ var _ = Describe("Fulfillment debug image", func() {
 		for _, workload := range workloads {
 			By("attaching to " + workload.process)
 			pod := waitForFulfillmentDebugPod(namespace, workload, debugImage)
-			Expect(pod.Spec.ServiceAccountName).To(Equal("debug"))
+			Expect(pod.Spec.ServiceAccountName).To(Equal("fulfillment-debug"))
 
 			container := fulfillmentPodContainer(pod, workload.container)
 			Expect(container.Image).To(Equal(debugImage))
@@ -88,15 +84,9 @@ var _ = Describe("Fulfillment debug image", func() {
 			Expect(container.SecurityContext.Capabilities.Add).To(ContainElement("SYS_PTRACE"))
 			Expect(pod.Spec.SecurityContext.SeccompProfile.Type).To(Equal("Unconfined"))
 
-			localPort, stopPortForward, err := startFulfillmentDebugPortForward(namespace, pod.Metadata.Name)
-			Expect(err).NotTo(HaveOccurred())
-			DeferCleanup(stopPortForward)
-
-			threadCount, running, err := inspectFulfillmentDebuggee(localPort)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(threadCount).To(BeNumerically(">", 0))
-			Expect(running).To(BeFalse(), "the debuggee remains paused until the IDE resumes it")
-			stopPortForward()
+			output, err := runFulfillmentDebugAttach(namespace, pod.Metadata.Name)
+			Expect(err).NotTo(HaveOccurred(), string(output))
+			Expect(string(output)).To(ContainSubstring("thread(s), paused"))
 		}
 	})
 })
@@ -253,110 +243,11 @@ func runFulfillmentDebugCommand(timeout time.Duration, name string, args ...stri
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
-func startFulfillmentDebugPortForward(namespace, podName string) (int, func(), error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "kubectl", "port-forward", "--address=127.0.0.1",
-		"--namespace", namespace, "pod/"+podName, ":2345")
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return 0, nil, err
+func runFulfillmentDebugAttach(namespace, podName string) ([]byte, error) {
+	helper := os.Getenv("OSAC_DEBUG_ATTACH_HELPER")
+	if helper == "" {
+		return nil, fmt.Errorf("OSAC_DEBUG_ATTACH_HELPER is required for the focused debug test")
 	}
-	cmd.Stderr = GinkgoWriter
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return 0, nil, err
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	lines := make(chan string, 8)
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			lines <- scanner.Text()
-		}
-		if err := scanner.Err(); err != nil {
-			lines <- err.Error()
-		}
-		close(lines)
-	}()
-
-	var stopOnce sync.Once
-	stop := func() {
-		stopOnce.Do(func() {
-			cancel()
-			select {
-			case <-done:
-			case <-time.After(5 * time.Second):
-				_ = cmd.Process.Kill()
-				<-done
-			}
-		})
-	}
-	timer := time.NewTimer(30 * time.Second)
-	defer timer.Stop()
-	for {
-		select {
-		case line, ok := <-lines:
-			if !ok {
-				stop()
-				return 0, nil, fmt.Errorf("kubectl port-forward exited before opening a local port")
-			}
-			const prefix = "Forwarding from 127.0.0.1:"
-			if !strings.HasPrefix(line, prefix) {
-				continue
-			}
-			portText, _, _ := strings.Cut(strings.TrimPrefix(line, prefix), " -> ")
-			port, err := strconv.Atoi(portText)
-			if err != nil {
-				stop()
-				return 0, nil, fmt.Errorf("parse port-forward output %q: %w", line, err)
-			}
-			return port, stop, nil
-		case err := <-done:
-			cancel()
-			if err == nil {
-				return 0, nil, fmt.Errorf("kubectl port-forward exited before opening a local port")
-			}
-			return 0, nil, fmt.Errorf("kubectl port-forward exited before opening a local port: %w", err)
-		case <-timer.C:
-			stop()
-			return 0, nil, fmt.Errorf("timed out waiting for kubectl port-forward")
-		}
-	}
-}
-
-func inspectFulfillmentDebuggee(localPort int) (int, bool, error) {
-	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
-	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
-	if err != nil {
-		return 0, false, err
-	}
-	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return 0, false, err
-	}
-	client := jsonrpc.NewClient(conn)
-	defer client.Close()
-	var stateReply struct {
-		State json.RawMessage
-	}
-	if err := client.Call("RPCServer.State", struct {
-		NonBlocking bool
-	}{NonBlocking: true}, &stateReply); err != nil {
-		return 0, false, err
-	}
-	var state struct {
-		Running bool
-	}
-	if err := json.Unmarshal(stateReply.State, &state); err != nil {
-		return 0, false, err
-	}
-	var reply struct {
-		Threads []json.RawMessage
-	}
-	if err := client.Call("RPCServer.ListThreads", struct{}{}, &reply); err != nil {
-		return 0, false, err
-	}
-	return len(reply.Threads), state.Running, nil
+	return runFulfillmentDebugCommand(45*time.Second, "python3", helper,
+		"--namespace", namespace, "--pod", podName)
 }

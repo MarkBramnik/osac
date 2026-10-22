@@ -187,7 +187,7 @@ The targets are defined in
 | `build-osac-operator` | Build a normal or Delve-enabled operator image; push by default. No Helm or cluster access. |
 | `build-fulfillment-service` | Build a normal or shared Delve-enabled Fulfillment image; push by default. No Helm or cluster access. |
 | `install-services` | Apply selected component images/debug settings in one upgrade of the existing `osac` Helm release. |
-| `enable-debug [NS=<namespace>]` | Install the OpenShift remote-debug SCC for the `debug` ServiceAccount in that namespace (default: `osac`). |
+| `enable-debug [NS=<namespace>]` | Install the OpenShift remote-debug SCC for `osac-operator-debug` and `fulfillment-debug` in that namespace (default: `osac`). |
 | `disable-debug` | Remove that SCC release after checking for active Pods using it. |
 | `remote-debug-scc-integration-test` | Manually verify SCC admission and the removal guard on an explicitly approved OpenShift cluster. |
 | `remote-debug-make-test` | Check image and install Make workflows without a cluster. |
@@ -366,21 +366,20 @@ the SCC itself is cluster-scoped. These targets require the permissions needed
 to create and delete cluster-scoped SCC resources.
 
 The SCC grants `SYS_PTRACE` and unconfined seccomp only to
-`system:serviceaccount:<NS>:debug`; it has no service-account group grant. The
-umbrella Helm chart creates this ServiceAccount when debug mode is enabled, so
-Kind needs no SCC setup. The same account is used by selected debug workloads.
-When the operator is debugged, it also receives the operator's RBAC bindings;
-Fulfillment debug pods using the shared account therefore share those
-permissions in that development namespace. The SCC still denies privileged
-containers, host access, and privilege escalation, and requires a read-only
-root filesystem. Its priority is `0` (OpenShift rejects negative SCC
-priorities).
+`system:serviceaccount:<NS>:osac-operator-debug` and
+`system:serviceaccount:<NS>:fulfillment-debug`; it has no service-account
+group grant. The charts create each identity when its component is debugged,
+so Kind needs no SCC setup. The operator debug account receives operator RBAC;
+the separate Fulfillment account has no operator role binding. The SCC still
+denies privileged containers, host access, and privilege escalation, and
+requires a read-only root filesystem. Its priority is `0` (OpenShift rejects
+negative SCC priorities).
 
 To verify real OpenShift admission and the `disable-debug` guard, run the
 installer's manual integration test only on an approved disposable or
 admin-coordinated cluster. It creates a temporary namespace and cluster-scoped
-SCC, proves a debug Pod is admitted with that SCC, verifies removal is blocked
-while the Pod is running, then removes the Pod and SCC:
+SCC, proves both named debug-account Pods are admitted with that SCC, verifies
+removal is blocked while either Pod is running, then removes the Pods and SCC:
 
 ```bash
 OSAC_DEBUG_SCC_IT_APPROVED=true \
@@ -467,8 +466,8 @@ kubectl rollout restart deployment/osac-operator -n osac
 | `--leader-elect=false` in debug; `--leader-elect=true` otherwise. | A breakpoint pauses the manager, including Lease renewal. Disabling election prevents a long intentional pause from causing leader-election loss and manager exit. Debug mode must use one isolated manager to avoid concurrent reconciliation. |
 | Manager liveness and readiness probes are omitted. | Delve can be running while its manager is paused for an IDE attach; normal manager probes would fail or cause unwanted restarts. Helm waits for the Delve container, not for the manager to resume. |
 | The debug container requests `SYS_PTRACE`, uses unconfined seccomp, and mounts a writable `/tmp` `emptyDir`; the root filesystem remains read-only and all other capabilities are dropped. | Delve needs to trace the Go process and has temporary runtime files. OpenShift admits this only with the debug SCC. |
-| Debug mode uses the shared `debug` ServiceAccount, optional debug resource values, and platform-specific `fsGroup` and image-pull policy. | The shared account is available on Kind and OpenShift; when operator debugging is enabled it receives the operator's RBAC, which Fulfillment debug pods also share. |
-| OpenShift debugging uses the separate Helm-managed `osac-remote-debug` SCC release, scoped to `system:serviceaccount:<NS>:debug`. | The Pod requests `SYS_PTRACE` and unconfined seccomp; the SCC allows these while continuing to deny privileged containers and host access. No service-account group is granted access. |
+| Debug mode uses separate `osac-operator-debug` and `fulfillment-debug` ServiceAccounts, optional debug resource values, and platform-specific `fsGroup` and image-pull policy. | Each component keeps its own identity on Kind and OpenShift; only the operator account receives operator RBAC. |
+| OpenShift debugging uses the separate Helm-managed `osac-remote-debug` SCC release, scoped to the two named debug accounts in `<NS>`. | The Pod requests `SYS_PTRACE` and unconfined seccomp; the SCC allows these while continuing to deny privileged containers and host access. No service-account group is granted access. |
 | Only the manager changes; the console-proxy Deployment remains on the normal image with its regular probes. | The supported debugging scope is the operator manager, not the console proxy. |
 
 The operator's regular behavior is restored by setting `DEBUG=false` in

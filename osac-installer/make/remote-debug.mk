@@ -65,71 +65,27 @@ DEBUG_SCC_TARGET_NAMESPACE ?= $(if $(strip $(NS)),$(NS),osac)
 # SCC-only targets have no PROFILE, so use the caller's kubeconfig or the default.
 enable-debug disable-debug: export KUBECONFIG := $(or $(KUBECONFIG),$(HOME)/.kube/config)
 
-.PHONY: build-osac-operator
-build-osac-operator: ## Build (and by default push) the normal or Delve-enabled operator image.
+define build-component-image
 	@case "$(DEBUG)" in true|false) ;; \
 		*) echo "ERROR: DEBUG must be true or false" >&2; exit 1 ;; \
 	esac
 	@case "$(PUSH)" in true|false) ;; \
 		*) echo "ERROR: PUSH must be true or false" >&2; exit 1 ;; \
 	esac
-	@if [ "$(PUSH)" = true ] && [ -z "$(OSAC_OPERATOR_IMAGE)" ]; then \
-		echo "ERROR: OSAC_OPERATOR_IMAGE is required when PUSH=true" >&2; exit 1; \
+	@if [ "$(PUSH)" = true ] && [ -z "$(2)" ]; then \
+		echo "ERROR: $(1) is required when PUSH=true" >&2; exit 1; \
 	fi
-ifeq ($(DEBUG),true)
-	$(MAKE) -C ../osac-operator image-build-debug \
-		DEBUG_IMG="$(OSAC_OPERATOR_IMAGE_EFFECTIVE)" \
-		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
-		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
-ifeq ($(PUSH),true)
-	$(MAKE) -C ../osac-operator image-push-debug \
-		DEBUG_IMG="$(OSAC_OPERATOR_IMAGE_EFFECTIVE)" \
-		CONTAINER_TOOL="$(CONTAINER_TOOL)"
-endif
-else
-	$(MAKE) -C ../osac-operator image-build \
-		IMG="$(OSAC_OPERATOR_IMAGE_EFFECTIVE)" \
-		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
-		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
-ifeq ($(PUSH),true)
-	$(MAKE) -C ../osac-operator image-push \
-		IMG="$(OSAC_OPERATOR_IMAGE_EFFECTIVE)" \
-		CONTAINER_TOOL="$(CONTAINER_TOOL)"
-endif
-endif
+	+$(if $(filter true,$(DEBUG)),$(MAKE) -C "$(4)" image-build-debug DEBUG_IMG="$(3)" CONTAINER_TOOL="$(CONTAINER_TOOL)" $(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)"),$(MAKE) -C "$(4)" image-build IMG="$(3)" CONTAINER_TOOL="$(CONTAINER_TOOL)" $(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)"))
+	+$(if $(filter true,$(PUSH)),$(if $(filter true,$(DEBUG)),$(MAKE) -C "$(4)" image-push-debug DEBUG_IMG="$(3)" CONTAINER_TOOL="$(CONTAINER_TOOL)",$(MAKE) -C "$(4)" image-push IMG="$(3)" CONTAINER_TOOL="$(CONTAINER_TOOL)"))
+endef
+
+.PHONY: build-osac-operator
+build-osac-operator: ## Build (and by default push) the normal or Delve-enabled operator image.
+	$(call build-component-image,OSAC_OPERATOR_IMAGE,$(OSAC_OPERATOR_IMAGE),$(OSAC_OPERATOR_IMAGE_EFFECTIVE),../osac-operator)
 
 .PHONY: build-fulfillment-service
 build-fulfillment-service: ## Build (and by default push) the normal or Delve-enabled Fulfillment image.
-	@case "$(DEBUG)" in true|false) ;; \
-		*) echo "ERROR: DEBUG must be true or false" >&2; exit 1 ;; \
-	esac
-	@case "$(PUSH)" in true|false) ;; \
-		*) echo "ERROR: PUSH must be true or false" >&2; exit 1 ;; \
-	esac
-	@if [ "$(PUSH)" = true ] && [ -z "$(FULFILLMENT_SERVICE_IMAGE)" ]; then \
-		echo "ERROR: FULFILLMENT_SERVICE_IMAGE is required when PUSH=true" >&2; exit 1; \
-	fi
-ifeq ($(DEBUG),true)
-	$(MAKE) -C ../fulfillment-service image-build-debug \
-		DEBUG_IMG="$(FULFILLMENT_SERVICE_IMAGE_EFFECTIVE)" \
-		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
-		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
-ifeq ($(PUSH),true)
-	$(MAKE) -C ../fulfillment-service image-push-debug \
-		DEBUG_IMG="$(FULFILLMENT_SERVICE_IMAGE_EFFECTIVE)" \
-		CONTAINER_TOOL="$(CONTAINER_TOOL)"
-endif
-else
-	$(MAKE) -C ../fulfillment-service image-build \
-		IMG="$(FULFILLMENT_SERVICE_IMAGE_EFFECTIVE)" \
-		CONTAINER_TOOL="$(CONTAINER_TOOL)" \
-		$(if $(strip $(IMAGE_PLATFORM)),IMAGE_PLATFORM="$(IMAGE_PLATFORM)")
-ifeq ($(PUSH),true)
-	$(MAKE) -C ../fulfillment-service image-push \
-		IMG="$(FULFILLMENT_SERVICE_IMAGE_EFFECTIVE)" \
-		CONTAINER_TOOL="$(CONTAINER_TOOL)"
-endif
-endif
+	$(call build-component-image,FULFILLMENT_SERVICE_IMAGE,$(FULFILLMENT_SERVICE_IMAGE),$(FULFILLMENT_SERVICE_IMAGE_EFFECTIVE),../fulfillment-service)
 
 .PHONY: install-services
 install-services: ## Build selected images by default, force their rollout, then upgrade OSAC once.
@@ -176,11 +132,13 @@ ifeq ($(and $(PLATFORM),$(filter openshift,$(PLATFORM)),$(filter true,$(DEBUG)))
 		echo "ERROR: Helm release exists but SCC '$(DEBUG_SCC_NAME)' is missing; run 'make enable-debug NS=$(NS)'." >&2; \
 		exit 1; \
 	}
-	@authorized_user="system:serviceaccount:$(NS):debug"; \
+	@authorized_users="system:serviceaccount:$(NS):osac-operator-debug system:serviceaccount:$(NS):fulfillment-debug"; \
 		scc_users="$$(kubectl get scc "$(DEBUG_SCC_NAME)" -o jsonpath='{.users[*]}')"; \
-		case " $$scc_users " in *" $$authorized_user "*) ;; *) \
-			echo "ERROR: SCC '$(DEBUG_SCC_NAME)' is not scoped to $$authorized_user; run 'make enable-debug NS=$(NS)' first." >&2; \
-			exit 1 ;; esac; \
+		for authorized_user in $$authorized_users; do \
+			case " $$scc_users " in *" $$authorized_user "*) ;; *) \
+				echo "ERROR: SCC '$(DEBUG_SCC_NAME)' is missing $$authorized_user; run 'make enable-debug NS=$(NS)' first." >&2; \
+				exit 1 ;; esac; \
+		done; \
 		scc_groups="$$(kubectl get scc "$(DEBUG_SCC_NAME)" -o jsonpath='{.groups[*]}')"; \
 		if [ -n "$$scc_groups" ]; then \
 			echo "ERROR: SCC '$(DEBUG_SCC_NAME)' has an unexpected group grant; reinstall it with 'make enable-debug NS=$(NS)'." >&2; \

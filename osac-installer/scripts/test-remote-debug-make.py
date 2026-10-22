@@ -187,7 +187,8 @@ def test_install_services_openshift_checks_scc_and_sets_cluster_hosts() -> None:
     assert output.index("remote-debug SCC is not enabled") < output.index(
         "helm --repository-config /dev/null dependency build charts/osac"
     )
-    assert "system:serviceaccount:osac:debug" in output
+    assert "system:serviceaccount:osac:osac-operator-debug" in output
+    assert "system:serviceaccount:osac:fulfillment-debug" in output
     assert "unexpected group grant" in output
     assert "global.osacDeploymentId=osac/osac" in output
     assert "service.externalHostname=fulfillment-api-osac.apps.example.test" in output

@@ -69,12 +69,12 @@ def test_debug_on_is_manager_only(docs: list[dict], continue_value: str) -> None
     pod_security = pod_spec["securityContext"]
     assert pod_security["seccompProfile"]["type"] == "Unconfined"
     assert pod_security["fsGroup"] == 1001
-    assert pod_spec["serviceAccountName"] == "debug"
+    assert pod_spec["serviceAccountName"] == "osac-operator-debug"
     debug_service_accounts = [
         item
         for item in docs
         if item.get("kind") == "ServiceAccount"
-        and item.get("metadata", {}).get("name") == "debug"
+        and item.get("metadata", {}).get("name") == "osac-operator-debug"
     ]
     assert len(debug_service_accounts) == 1
     assert manager["command"] == ["/usr/local/bin/debug-entrypoint"]
