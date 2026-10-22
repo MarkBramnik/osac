@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "targetNamespace": {
+      "type": "string",
+      "description": "OSAC namespace containing the debug ServiceAccount",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    }
+  },
+  "required": ["targetNamespace"],
+  "additionalProperties": false
+}

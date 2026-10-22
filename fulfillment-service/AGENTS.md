@@ -66,6 +66,7 @@ uv run ruff check # Lint Python.
 helm lint charts/service -f charts/service/ci-values.yaml
 helm template test charts/service -f charts/service/ci-values.yaml
 go build ./cmd/fulfillment-service ./cmd/osac
+make test-debug-entrypoint # Shared launcher contract; Delve is a fake executable.
 ginkgo run --timeout 10m internal/servers # Focused server unit tests.
 ginkgo run --timeout 20m -r internal # All unit suites. Slow, run only when necessary.
 ```
@@ -73,6 +74,9 @@ ginkgo run --timeout 20m -r internal # All unit suites. Slow, run only when nece
 ### Integration tests
 
 Integration tests run in a local Kind Kubernetes cluster; the installer builds and deploys current images.
+The `SUITE=fulfillment` run also builds the debug image and, after the normal
+suite, checks real Delve attaches to all four paused Fulfillment processes via
+`kubectl port-forward`; it restores the normal image in cleanup.
 
 See the [fulfillment-service test tiers and coverage notes](../docs/INTEGRATION-TESTING.md#fulfillment-service).
 

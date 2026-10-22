@@ -30,11 +30,13 @@ The Containerfile has separate normal and debug build stages:
 2. `debug-builder` builds `manager-debug` with optimizations and inlining
    disabled, and builds the `dlv` executable.
 3. The normal `release` image contains the regular binaries. The separate
-   `debug` target adds `manager-debug`, `dlv`, and
-   `osac-operator/hack/debug-entrypoint.sh`.
+   `debug` target adds `manager-debug`, `dlv`, and the shared
+   `tools/debug-entrypoint.sh`, configured to launch `manager-debug`.
 
 See the [operator Containerfile](../../../osac-operator/Containerfile) and
-[debug entrypoint](../../../osac-operator/hack/debug-entrypoint.sh).
+[shared debug entrypoint](../../../tools/debug-entrypoint.sh). The Fulfillment
+debug image uses the same script, configured for
+`/usr/local/bin/fulfillment-service`.
 
 The debug Pod starts the entrypoint, which `exec`s Delve as PID 1. Both debug
 images pin Delve to IPv4 loopback, `127.0.0.1:2345`, inside the container; the
@@ -98,9 +100,11 @@ schema validation and suppresses hooks so unrelated AAP bootstrap and
 template-publishing jobs aren't rerun. The full `install-osac` workflow retains
 its normal hook behavior.
 
-The separate SCC chart has no user-configurable values. It creates the
-cluster-scoped SCC `osac-remote-debug` and is installed as Helm release
-`osac-debug-scc` in the fixed release-storage namespace `kube-system`.
+The separate SCC chart creates the cluster-scoped SCC `osac-remote-debug` and
+is installed as Helm release `osac-debug-scc` in the fixed release-storage
+namespace `kube-system`. `enable-debug` scopes its grant to the `debug`
+ServiceAccount in the target OSAC namespace, defaulting to `osac`; pass
+`NS=<namespace>` to select another namespace.
 
 For `debug-me`, configuration is in `debug-config.yaml`, not the installer
 schema. Each `targets` item identifies a workload and container. The config can
@@ -183,8 +187,9 @@ The targets are defined in
 | `build-osac-operator` | Build a normal or Delve-enabled operator image; push by default. No Helm or cluster access. |
 | `build-fulfillment-service` | Build a normal or shared Delve-enabled Fulfillment image; push by default. No Helm or cluster access. |
 | `install-services` | Apply selected component images/debug settings in one upgrade of the existing `osac` Helm release. |
-| `enable-debug` | Install the OpenShift remote-debug SCC Helm release. |
+| `enable-debug [NS=<namespace>]` | Install the OpenShift remote-debug SCC for the `debug` ServiceAccount in that namespace (default: `osac`). |
 | `disable-debug` | Remove that SCC release after checking for active Pods using it. |
+| `remote-debug-scc-integration-test` | Manually verify SCC admission and the removal guard on an explicitly approved OpenShift cluster. |
 | `remote-debug-make-test` | Check image and install Make workflows without a cluster. |
 | `remote-debug-render-test` | Check normal, combined-debug chart renders and SCC policy. |
 
@@ -241,7 +246,7 @@ with the same container tool before building:
 
 ```bash
 export KUBECONFIG=/path/to/openshift.kubeconfig
-make -C osac-installer enable-debug
+make -C osac-installer enable-debug NS=osac
 
 make -C osac-installer build-osac-operator \
   DEBUG=true IMAGE_PLATFORM=linux/amd64 \
@@ -352,18 +357,39 @@ SCC only after no debug Pods use it.
 
 ### OpenShift SCC lifecycle
 
-The SCC is required only on OpenShift. `enable-debug` and `disable-debug` need
-no `PLATFORM`, `PROFILE`, or `NS` arguments. They use the inherited `KUBECONFIG`,
-or `~/.kube/config` if it is unset. The Helm release record lives in
-`kube-system`; the SCC itself is cluster-scoped. These targets require the
-permissions needed to create and delete cluster-scoped SCC resources.
+The SCC is required only on OpenShift. `enable-debug` defaults to namespace
+`osac`; pass `NS=<namespace>` to select another OSAC namespace.
+`disable-debug` needs no namespace. Neither target needs `PLATFORM` or
+`PROFILE`. They use the inherited `KUBECONFIG`, or
+`~/.kube/config` if it is unset. The Helm release record lives in `kube-system`;
+the SCC itself is cluster-scoped. These targets require the permissions needed
+to create and delete cluster-scoped SCC resources.
 
-The current SCC permits **all service accounts in all namespaces** to request
-`SYS_PTRACE` and unconfined seccomp. It still denies privileged containers,
-host access, and privilege escalation, and requires a read-only root
-filesystem. Its priority is `0` (OpenShift rejects negative SCC priorities).
-This is a broad, temporary cluster permission; use it only where that scope is
-acceptable.
+The SCC grants `SYS_PTRACE` and unconfined seccomp only to
+`system:serviceaccount:<NS>:debug`; it has no service-account group grant. The
+umbrella Helm chart creates this ServiceAccount when debug mode is enabled, so
+Kind needs no SCC setup. The same account is used by selected debug workloads.
+When the operator is debugged, it also receives the operator's RBAC bindings;
+Fulfillment debug pods using the shared account therefore share those
+permissions in that development namespace. The SCC still denies privileged
+containers, host access, and privilege escalation, and requires a read-only
+root filesystem. Its priority is `0` (OpenShift rejects negative SCC
+priorities).
+
+To verify real OpenShift admission and the `disable-debug` guard, run the
+installer's manual integration test only on an approved disposable or
+admin-coordinated cluster. It creates a temporary namespace and cluster-scoped
+SCC, proves a debug Pod is admitted with that SCC, verifies removal is blocked
+while the Pod is running, then removes the Pod and SCC:
+
+```bash
+OSAC_DEBUG_SCC_IT_APPROVED=true \
+KUBECONFIG=/path/to/approved-openshift.kubeconfig \
+make -C osac-installer remote-debug-scc-integration-test
+```
+
+The test refuses to run if the managed or legacy SCC, its Helm release, or its
+temporary namespace already exists. It is manual and is not part of Kind CI.
 
 To finish debugging, restore normal mode for every component being debugged,
 then remove the SCC:
@@ -441,8 +467,8 @@ kubectl rollout restart deployment/osac-operator -n osac
 | `--leader-elect=false` in debug; `--leader-elect=true` otherwise. | A breakpoint pauses the manager, including Lease renewal. Disabling election prevents a long intentional pause from causing leader-election loss and manager exit. Debug mode must use one isolated manager to avoid concurrent reconciliation. |
 | Manager liveness and readiness probes are omitted. | Delve can be running while its manager is paused for an IDE attach; normal manager probes would fail or cause unwanted restarts. Helm waits for the Delve container, not for the manager to resume. |
 | The debug container requests `SYS_PTRACE`, uses unconfined seccomp, and mounts a writable `/tmp` `emptyDir`; the root filesystem remains read-only and all other capabilities are dropped. | Delve needs to trace the Go process and has temporary runtime files. OpenShift admits this only with the debug SCC. |
-| Debug mode uses a separate `osac-operator-debug` ServiceAccount, optional debug resource values, and platform-specific `fsGroup` and image-pull policy. | Keeps debug-specific identity and runtime settings out of normal deployments and handles Kind versus OpenShift UID behavior. |
-| OpenShift debugging uses the separate Helm-managed `osac-remote-debug` SCC release. | The Pod requests `SYS_PTRACE` and unconfined seccomp; the SCC allows these while continuing to deny privileged containers and host access. Its current `system:serviceaccounts` grant is cluster-wide and must be treated as temporary. |
+| Debug mode uses the shared `debug` ServiceAccount, optional debug resource values, and platform-specific `fsGroup` and image-pull policy. | The shared account is available on Kind and OpenShift; when operator debugging is enabled it receives the operator's RBAC, which Fulfillment debug pods also share. |
+| OpenShift debugging uses the separate Helm-managed `osac-remote-debug` SCC release, scoped to `system:serviceaccount:<NS>:debug`. | The Pod requests `SYS_PTRACE` and unconfined seccomp; the SCC allows these while continuing to deny privileged containers and host access. No service-account group is granted access. |
 | Only the manager changes; the console-proxy Deployment remains on the normal image with its regular probes. | The supported debugging scope is the operator manager, not the console proxy. |
 
 The operator's regular behavior is restored by setting `DEBUG=false` in

@@ -54,7 +54,7 @@ SCC before enabling debug:
 
 ```bash
 export KUBECONFIG=/path/to/openshift.kubeconfig
-make -C osac-installer enable-debug
+make -C osac-installer enable-debug NS=osac
 
 make -C osac-installer install-services \
   PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
@@ -71,6 +71,9 @@ validation and hooks suppressed. Image references can instead be stored in
 those entries. Use the same profile and custom values as the existing release.
 `SERVICES` is the complete set of components to debug; components omitted from
 it return to profile values.
+The umbrella chart creates one shared `debug` ServiceAccount for the selected
+workloads; when operator debugging is enabled, Fulfillment debug pods share the
+operator's RBAC bindings in that development namespace.
 Each selected service is forced through a rollout on every invocation, even if
 the pushed image reuses its previous tag. Selecting `fulfillment-service` rolls
 all four of its Deployments and disconnects existing IDE sessions.

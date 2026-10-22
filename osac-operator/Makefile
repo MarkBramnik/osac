@@ -2,6 +2,7 @@ OSAC_DEV_NAMESPACE ?= osac-operator-dev
 
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/osac-project/osac-operator:latest
+DEBUG_INTEGRATION_IMG ?= localhost/osac-operator:integration-debug
 # Name of Containerfile
 CONTAINERFILE ?= Containerfile
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
@@ -91,7 +92,10 @@ helm-validate: helm-lint ## Lint and template-render Helm charts.
 # the root Makefile's `make dev-env` + `make integration-test-operator`.
 .PHONY: integration-tests
 integration-tests: manifests generate helm-crds ## Run integration tests against a Kind cluster.
-	ginkgo run --timeout 30m -v test/integration
+	$(MAKE) image-build-debug DEBUG_IMG="$(DEBUG_INTEGRATION_IMG)"
+	$(call kind-load-image,$(DEBUG_INTEGRATION_IMG))
+	KIND_CLUSTER="$(KIND_CLUSTER_NAME)" OSAC_OPERATOR_DEBUG_IMAGE="$(DEBUG_INTEGRATION_IMG)" \
+		ginkgo run --timeout 30m -v test/integration
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

@@ -66,6 +66,7 @@ ENTRYPOINT ["/usr/local/bin/manager"]
 FROM runtime AS debug
 COPY --from=debug-builder /opt/app-root/src/osac-operator/manager-debug /usr/local/bin/
 COPY --from=debug-builder /opt/app-root/src/osac-operator/dlv /usr/local/bin/
-COPY --chmod=0555 osac-operator/hack/debug-entrypoint.sh /usr/local/bin/debug-entrypoint
+COPY --chmod=0555 tools/debug-entrypoint.sh /usr/local/bin/debug-entrypoint
+ENV OSAC_DEBUGGEE_BIN=/usr/local/bin/manager-debug
 
 FROM runtime AS release

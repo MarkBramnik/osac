@@ -59,6 +59,7 @@ DEBUG_SCC_RELEASE_NAMESPACE := kube-system
 DEBUG_SCC_CHART := charts/osac-debug-scc
 DEBUG_SCC_NAME := osac-remote-debug
 DEBUG_SCC_LEGACY_NAME := osac-operator-debug
+DEBUG_SCC_TARGET_NAMESPACE ?= $(if $(strip $(NS)),$(NS),osac)
 
 # The main installer defaults KUBECONFIG to its profile-specific Kind cluster.
 # SCC-only targets have no PROFILE, so use the caller's kubeconfig or the default.
@@ -168,13 +169,23 @@ ifeq ($(PLATFORM),openshift)
 endif
 ifeq ($(and $(PLATFORM),$(filter openshift,$(PLATFORM)),$(filter true,$(DEBUG))),true)
 	@helm status "$(DEBUG_SCC_RELEASE)" --namespace "$(DEBUG_SCC_RELEASE_NAMESPACE)" >/dev/null 2>&1 || { \
-		echo "ERROR: remote-debug SCC is not enabled; run 'make enable-debug' first." >&2; \
+		echo "ERROR: remote-debug SCC is not enabled; run 'make enable-debug NS=$(NS)' first." >&2; \
 		exit 1; \
 	}
 	@kubectl get scc "$(DEBUG_SCC_NAME)" >/dev/null 2>&1 || { \
-		echo "ERROR: Helm release exists but SCC '$(DEBUG_SCC_NAME)' is missing; run 'make enable-debug'." >&2; \
+		echo "ERROR: Helm release exists but SCC '$(DEBUG_SCC_NAME)' is missing; run 'make enable-debug NS=$(NS)'." >&2; \
 		exit 1; \
 	}
+	@authorized_user="system:serviceaccount:$(NS):debug"; \
+		scc_users="$$(kubectl get scc "$(DEBUG_SCC_NAME)" -o jsonpath='{.users[*]}')"; \
+		case " $$scc_users " in *" $$authorized_user "*) ;; *) \
+			echo "ERROR: SCC '$(DEBUG_SCC_NAME)' is not scoped to $$authorized_user; run 'make enable-debug NS=$(NS)' first." >&2; \
+			exit 1 ;; esac; \
+		scc_groups="$$(kubectl get scc "$(DEBUG_SCC_NAME)" -o jsonpath='{.groups[*]}')"; \
+		if [ -n "$$scc_groups" ]; then \
+			echo "ERROR: SCC '$(DEBUG_SCC_NAME)' has an unexpected group grant; reinstall it with 'make enable-debug NS=$(NS)'." >&2; \
+			exit 1; \
+		fi
 endif
 	@rm -rf $(OSAC_CHART)/charts
 	@helm --repository-config $(LOCAL_HELM_REPOSITORY_CONFIG) dependency build $(OSAC_CHART)
@@ -232,6 +243,7 @@ enable-debug: ## Install the OpenShift remote-debug SCC through its own Helm rel
 	}
 	@helm upgrade --install "$(DEBUG_SCC_RELEASE)" "$(DEBUG_SCC_CHART)" \
 		--namespace "$(DEBUG_SCC_RELEASE_NAMESPACE)" \
+		--set-string targetNamespace="$(DEBUG_SCC_TARGET_NAMESPACE)" \
 		--wait --timeout 5m
 
 .PHONY: disable-debug
@@ -271,3 +283,7 @@ remote-debug-render-test: ## Verify umbrella debug rendering without exposing Wi
 	rm -rf $(OSAC_CHART)/charts
 	helm --repository-config $(LOCAL_HELM_REPOSITORY_CONFIG) dependency build $(OSAC_CHART)
 	python3 scripts/test-remote-debug-render.py
+
+.PHONY: remote-debug-scc-integration-test
+remote-debug-scc-integration-test: ## Test SCC admission and removal on an explicitly approved OpenShift cluster.
+	./scripts/test-remote-debug-scc-openshift.sh

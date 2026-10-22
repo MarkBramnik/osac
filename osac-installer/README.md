@@ -526,7 +526,9 @@ The home-directory config can hold separate normal and debug references:
 }
 ```
 
-On OpenShift, run `make enable-debug` first. Restore normal settings for all
+On OpenShift, run `make enable-debug` first (the namespace defaults to `osac`)
+to grant the SCC only to the `debug` ServiceAccount. Set `NS=<namespace>` for a
+different namespace. Restore normal settings for all
 components and then remove the temporary SCC after no debug Pods use it:
 
 ```bash

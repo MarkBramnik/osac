@@ -9,9 +9,10 @@ metadata:
     helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | quote }}
   annotations:
     kubernetes.io/description: >-
-      Temporary OSAC remote-debug policy. All service accounts may request
-      SYS_PTRACE and unconfined seccomp; privileged containers, host access,
-      and privilege escalation remain disabled.
+      Temporary OSAC remote-debug policy. Only the debug service account in
+      {{ .Values.targetNamespace }} may request SYS_PTRACE and unconfined
+      seccomp; privileged containers, host access, and privilege escalation
+      remain disabled.
 priority: 0
 allowPrivilegedContainer: false
 allowPrivilegeEscalation: false
@@ -43,6 +44,6 @@ volumes:
 - emptyDir
 - projected
 - secret
-users: []
-groups:
-- system:serviceaccounts
+users:
+- system:serviceaccount:{{ .Values.targetNamespace }}:debug
+groups: []

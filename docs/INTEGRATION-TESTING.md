@@ -182,7 +182,9 @@ Touched-area requirements: [component guide](../fulfillment-service/AGENTS.md#in
 | Tier | Location / command | Exercises for real | Faked or omitted |
 |---|---|---|---|
 | Unit | `internal/`; `ginkgo run -r internal` | Fulfillment logic and adapters covered by package tests | External services are mocked where the package tests use mocks. |
+| Unit (debug entrypoint) | `hack/test-debug-entrypoint.sh`; `make -C fulfillment-service test-debug-entrypoint` | Shared POSIX launcher and argument forwarding | Delve is a fake executable; no image, Pod, or Kubernetes API is used. |
 | Component integration | `it/`; `make -C ../osac-installer test PLATFORM=kind PROFILE=dev NS=osac SUITE=fulfillment` | Deployed Fulfillment Service, its database, and the CLI binary built from this checkout. NetworkClass manager-registration and readiness specs run separately with the local OSAC Operator image deployed. | CaaS, VMaaS, BMaaS, and external provider workflows unless a specific test exercises them. |
+| Component integration, Fulfillment [DEV] (debug image) | `it/it_debug_image_test.go`; final focused phase of `SUITE=fulfillment` | Real Delve-enabled image deployed to all four Fulfillment Deployments; each Pod accepts an RPC attach through `kubectl port-forward` | Processes remain paused; no API or external-provider behavior is exercised. |
 | Component integration ([DEV] OSAC-6307) | `internal/servers` and `internal/database/migrations/126_hold_external_ip_capacity_until_archive_test.go`; from `fulfillment-service/`, run `go test ./internal/servers ./internal/database/migrations -timeout 20m` | Fulfillment server logic and PostgreSQL test container, including archive-time capacity and exclusivity for terminating consumers | Kubernetes and provider cleanup are not run; release completion is exercised by operator tests with provider fixtures. |
 | E2E | `../tests/e2e/` | Cross-component OSAC user journeys | Depends on the deployed test environment and its configured providers. |
 
@@ -241,6 +243,18 @@ Touched-area requirements: [component guide](../fulfillment-service/AGENTS.md#in
 
 Touched-area requirements: [component guide](../osac-installer/AGENTS.md#integration-testing).
 
+### Remote-debug test coverage
+
+| Tier and owner | Location / command | Exercises for real | Faked or omitted |
+|---|---|---|---|
+| Unit, OSAC Installer [DEV] | `make remote-debug-make-test` | Python image/config argument contracts and Make dry-run output | Container builds, registry operations, Helm apply, and cluster APIs are not run. |
+| Helm contract, OSAC Installer [DEV] | `make remote-debug-render-test` | Helm renders local umbrella/component/SCC charts and checks selected images, ServiceAccounts, and security settings | Image references are synthetic; no image is started and no Kubernetes API is contacted. |
+| Manual component integration, OSAC Installer [DEV] | `OSAC_DEBUG_SCC_IT_APPROVED=true KUBECONFIG=<approved-cluster> make remote-debug-scc-integration-test` | Real OpenShift SCC API, Pod admission annotation, and the `disable-debug` active-Pod guard | Uses a small UBI admission-probe Pod; does not run Delve or debug an OSAC process. Requires an approved disposable/coordinated cluster; not run in CI. |
+| Component integration orchestration, Fulfillment [DEV] | Final focused phase of `make test PLATFORM=kind PROFILE=dev NS=osac SUITE=fulfillment` | Builds/loads the real shared debug image, tests all four Delve endpoints, and restores the normal image | See the Fulfillment coverage above: debuggees remain paused and no API/provider behavior is exercised. |
+
+The SCC test is intentionally manual because it creates cluster-scoped state;
+run it only on an approved disposable or admin-coordinated OpenShift cluster.
+
 The `make mce-render-test` Helm contract renders the prerequisite charts from
 local sources. It asserts disabled defaults, explicit standalone MCE
 enablement, configuration, Assisted image overrides, compatibility RBAC,
@@ -274,6 +288,13 @@ it does not start the hooks or prove a deployed fulfillment endpoint accepts
 the certificate. The Kind
 `SUITE=fulfillment` target exercises deployed startup and API behavior, subject
 to the profile's configured CA and enabled services.
+
+The final focused phase of `SUITE=fulfillment` builds and loads the real
+Fulfillment debug image, enables it for all four deployments, attaches through
+`kubectl port-forward` to each Delve API, then restores the normal image. Its
+spec lives in `fulfillment-service/it/it_debug_image_test.go`; the installer
+owns orchestration, while the deployed debug-image boundary is Fulfillment
+component-integration coverage.
 
 ### OSAC-5343 deployed enablement coverage
 
@@ -317,8 +338,10 @@ Touched-area requirements: [component guide](../osac-operator/AGENTS.md#integrat
 | Tier | Location / command | Exercises for real | Faked or omitted |
 |---|---|---|---|
 | Unit | Co-located `*_test.go`; `make test` | Controller helpers, validation, provisioning state logic | External APIs and providers are mocked. |
+| Unit (debug entrypoint) | `hack/test-debug-entrypoint.sh`; `make -C osac-operator test-debug-entrypoint` | Shared shell launcher, fixed listener, continue modes, and manager argument forwarding | Delve is a fake executable; no debug image, Pod, or Kubernetes API is used. |
 | Envtest | Existing Controller Suite in `internal/controller/`; run by `make test` | Kubernetes API server, etcd, loaded CRDs and public in-process reconciliation | Provider/fulfillment responses and external CR progression are test-controlled; this is not a deployed worker. |
 | Component integration | `test/integration/`; deploy the current operator into Kind, then `make integration-tests` | Installed operator, Kubernetes API, CRDs, controller-manager, console proxy, networking, worker service-account authorization and startup without LVMS/TopoLVM | AAP/provider provisioning and external infrastructure are not real; some existing tests remove finalizers to bypass external-provider boundaries. |
+| Component integration, OSAC Operator [DEV] (debug image) | `test/integration/debug_image_test.go`; included by `make integration-tests` | Real debug image, rendered operator chart, Pod startup, loopback Delve listener and RPC attach through Kind port-forward | Does not resume the operator or exercise provider reconciliation; the debug process is isolated in a temporary namespace. |
 | Component integration (CI) | `make -C osac-installer test PLATFORM=kind PROFILE=dev NS=osac SUITE=operator` (repository root) | Thin Kind deployment used by the PR workflow | Same external-provider limitations as the local Kind suite. |
 | Contract | `test/contract/`; included by `make test` | Helm chart RBAC templates against the operator permission contract | No deployed operator or external provider. |
 | E2E | `../tests/e2e/` | Cross-component fulfillment journeys | Depends on the deployed environment and configured providers. |
@@ -363,6 +386,13 @@ Touched-area requirements: [component guide](../osac-operator/AGENTS.md#integrat
   `baremetalworker_test.go` queries Kubernetes authorization for the installed
   service account's ClusterOrder/status, InfraEnv, Agent, NodePool and Secret
   permissions. This is RBAC coverage, not worker watch delivery or host allocation.
+- **Remote-debug image startup and attach:** `test/integration/debug_image_test.go`
+  installs the operator chart with the real locally built debug image in a
+  temporary namespace, waits for its paused manager to run under Delve, and
+  uses the Delve RPC API over `kubectl port-forward` to list the debuggee's
+  threads. The Kind `make integration-tests` target builds and loads the image.
+  This proves image/entrypoint/chart wiring and attach, not resume behavior or
+  reconciliation; no real provider boundary is exercised.
 - **AAP, dispatcher, provisioning, KubeVirt and fulfillment:** A test-local
   dependency double does not prove the receiving service/provider boundary.
 - **Generated CRDs/manifests:** Change the source and run the owning generator.

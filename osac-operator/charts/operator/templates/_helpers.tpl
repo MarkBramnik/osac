@@ -64,8 +64,8 @@ Service account name
 {{- define "osac-operator.serviceAccountName" -}}
 {{- $name := default (include "osac-operator.fullname" .) .Values.serviceAccount.name -}}
 {{- $debugValues := (index .Values "debug") | default dict -}}
-{{- if and (index $debugValues "enabled") .Values.serviceAccount.create -}}
-{{- printf "%s-debug" $name | trunc 63 | trimSuffix "-" -}}
+{{- if index $debugValues "enabled" -}}
+debug
 {{- else -}}
 {{- $name -}}
 {{- end -}}

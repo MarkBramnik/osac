@@ -40,7 +40,7 @@ def render(*overrides: str) -> list[dict]:
     return [doc for doc in yaml.safe_load_all(result.stdout) if isinstance(doc, dict)]
 
 
-def render_debug_scc() -> list[dict]:
+def render_debug_scc(namespace: str = "debug-test") -> list[dict]:
     command = [
         os.environ.get("HELM_BIN", "helm"),
         "template",
@@ -48,6 +48,8 @@ def render_debug_scc() -> list[dict]:
         str(INSTALLER / "charts/osac-debug-scc"),
         "--namespace",
         "kube-system",
+        "--set-string",
+        f"targetNamespace={namespace}",
     ]
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode:
@@ -153,7 +155,12 @@ def test_debug_upgrade_only_changes_operator_manager() -> None:
     )
     manager_deployment, manager = operator_manager(docs)
     pod_spec = manager_deployment["spec"]["template"]["spec"]
-    assert pod_spec["serviceAccountName"] == "osac-operator-debug"
+    assert pod_spec["serviceAccountName"] == "debug"
+    assert sum(
+        item.get("kind") == "ServiceAccount"
+        and item.get("metadata", {}).get("name") == "debug"
+        for item in docs
+    ) == 1
     assert manager["command"] == ["/usr/local/bin/debug-entrypoint"]
     assert manager["image"] == DEBUG_IMAGE
     assert "--leader-elect=false" in manager["args"]
@@ -204,6 +211,12 @@ def test_combined_services_debug_render_validates_without_skipping_schema() -> N
     )
     assert controller["image"] == FULFILLMENT_DEBUG_IMAGE
     assert controller["command"] == ["/usr/local/bin/debug-entrypoint"]
+    assert manager_deployment["spec"]["template"]["spec"]["serviceAccountName"] == "debug"
+    assert sum(
+        item.get("kind") == "ServiceAccount"
+        and item.get("metadata", {}).get("name") == "debug"
+        for item in docs
+    ) == 1
     assert "livenessProbe" not in controller
     assert controller_deployment["spec"]["template"]["metadata"]["annotations"][
         "kubectl.kubernetes.io/restartedAt"
@@ -298,6 +311,7 @@ def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
             "kubectl.kubernetes.io/restartedAt"
         ] == ROLLOUT_TOKEN
         pod_spec = deployment["spec"]["template"]["spec"]
+        assert pod_spec["serviceAccountName"] == "debug"
         strategy = deployment["spec"]["strategy"]
         if deployment_name != "fulfillment-event-publisher":
             assert strategy["type"] == "RollingUpdate"
@@ -332,6 +346,12 @@ def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
         assert env["OSAC_DEBUG_CONTINUE"] == "false"
         assert "OSAC_DEBUG_LISTEN_ADDRESS" not in env
 
+    assert sum(
+        item.get("kind") == "ServiceAccount"
+        and item.get("metadata", {}).get("name") == "debug"
+        for item in docs
+    ) == 1
+
     mcp_deployment, mcp = deployment_container(
         docs, "fulfillment-mcp-server", "mcp-server"
     )
@@ -360,6 +380,11 @@ def test_fulfillment_debug_disabled_uses_normal_image_and_probes() -> None:
         fulfillment_debug_continue_value="false",
     )
     docs = render(*helm_args)
+    assert not any(
+        item.get("kind") == "ServiceAccount"
+        and item.get("metadata", {}).get("name") == "debug"
+        for item in docs
+    )
     _, grpc = deployment_container(docs, "fulfillment-grpc-server", "grpc-server")
     assert grpc["image"] == "ghcr.io/osac-project/fulfillment-service:latest"
     assert grpc["command"] == ["/usr/local/bin/fulfillment-service"]
@@ -401,15 +426,15 @@ def test_operator_debug_requires_an_image_reference() -> None:
         raise AssertionError("Operator debug rendered without a debug image")
 
 
-def test_debug_scc_is_narrow_except_for_explicit_cluster_wide_use() -> None:
-    docs = render_debug_scc()
+def test_debug_scc_is_scoped_to_the_selected_namespace() -> None:
+    docs = render_debug_scc("debug-test")
     assert len(docs) == 1
     scc = docs[0]
     assert scc["apiVersion"] == "security.openshift.io/v1"
     assert scc["kind"] == "SecurityContextConstraints"
     assert scc["metadata"]["name"] == "osac-remote-debug"
-    assert scc["groups"] == ["system:serviceaccounts"]
-    assert scc["users"] == []
+    assert scc["groups"] == []
+    assert scc["users"] == ["system:serviceaccount:debug-test:debug"]
     assert scc["allowedCapabilities"] == ["SYS_PTRACE"]
     assert scc["requiredDropCapabilities"] == ["ALL"]
     assert scc["seccompProfiles"] == ["runtime/default", "unconfined"]
@@ -435,7 +460,7 @@ def main() -> None:
     test_fulfillment_debug_disabled_uses_normal_image_and_probes()
     test_fulfillment_debug_requires_an_image_reference()
     test_operator_debug_requires_an_image_reference()
-    test_debug_scc_is_narrow_except_for_explicit_cluster_wide_use()
+    test_debug_scc_is_scoped_to_the_selected_namespace()
     print("installer remote-debug render contracts passed")
 
 

@@ -55,6 +55,9 @@ spec:
       {{ end }}
     spec:
       {{ if .Values.debug.enabled }}
+      serviceAccountName: debug
+      {{ end }}
+      {{ if .Values.debug.enabled }}
       securityContext:
         seccompProfile:
           type: Unconfined

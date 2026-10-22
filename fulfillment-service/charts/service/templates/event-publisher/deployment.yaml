@@ -36,6 +36,9 @@ spec:
         kubectl.kubernetes.io/restartedAt: {{ .Values.debug.rolloutToken | quote }}
       {{ end }}
     spec:
+      {{ if .Values.debug.enabled }}
+      serviceAccountName: debug
+      {{ end }}
       automountServiceAccountToken: false
       {{ if .Values.debug.enabled }}
       securityContext:

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ENTRYPOINT="${SCRIPT_DIR}/debug-entrypoint.sh"
+REPO_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd)
+ENTRYPOINT="${REPO_ROOT}/tools/debug-entrypoint.sh"
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
@@ -16,6 +17,7 @@ chmod +x "${tmpdir}/bin/dlv"
 export PATH="${tmpdir}/bin:${PATH}"
 export OSAC_DEBUG_TEST_ARGS="${tmpdir}/args"
 export OSAC_DEBUGGER_BIN="${tmpdir}/bin/dlv"
+export OSAC_DEBUGGEE_BIN=/usr/local/bin/fulfillment-service
 
 OSAC_DEBUG_CONTINUE=true OSAC_DEBUG_LISTEN_ADDRESS=0.0.0.0:2345 \
 	"${ENTRYPOINT}" start grpc-server --log-level=debug

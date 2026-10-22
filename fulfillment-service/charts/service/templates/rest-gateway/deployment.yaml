@@ -38,6 +38,7 @@ spec:
       {{ end }}
     spec:
       {{ if .Values.debug.enabled }}
+      serviceAccountName: debug
       securityContext:
         seccompProfile:
           type: Unconfined

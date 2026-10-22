@@ -187,6 +187,8 @@ def test_install_services_openshift_checks_scc_and_sets_cluster_hosts() -> None:
     assert output.index("remote-debug SCC is not enabled") < output.index(
         "helm --repository-config /dev/null dependency build charts/osac"
     )
+    assert "system:serviceaccount:osac:debug" in output
+    assert "unexpected group grant" in output
     assert "global.osacDeploymentId=osac/osac" in output
     assert "service.externalHostname=fulfillment-api-osac.apps.example.test" in output
     assert "service.internalHostname=fulfillment-internal-api-osac.apps.example.test" in output
@@ -542,7 +544,7 @@ def test_helm_argument_builder_validates_debug_image_requirements() -> None:
         raise AssertionError("debug image omission was accepted")
 
 
-def test_enable_debug_needs_no_deployment_arguments() -> None:
+def test_enable_debug_defaults_to_osac_and_accepts_namespace_override() -> None:
     output = dry_run("enable-debug")
     assert "/apis/security.openshift.io/v1" in output
     assert (
@@ -550,9 +552,12 @@ def test_enable_debug_needs_no_deployment_arguments() -> None:
         in output
     )
     assert '--namespace "kube-system"' in output
+    assert '--set-string targetNamespace="osac"' in output
     assert "PLATFORM is required" not in output
     assert "PROFILE is required" not in output
-    assert "NS is required" not in output
+
+    override = dry_run("enable-debug", "NS=osac-dev")
+    assert '--set-string targetNamespace="osac-dev"' in override
 
 
 def test_disable_debug_checks_pods_before_uninstall() -> None:
@@ -592,7 +597,7 @@ def main() -> None:
     test_install_services_rejects_unknown_services_before_cluster_calls()
     test_helm_argument_builder_maps_services_and_image_references()
     test_helm_argument_builder_validates_debug_image_requirements()
-    test_enable_debug_needs_no_deployment_arguments()
+    test_enable_debug_defaults_to_osac_and_accepts_namespace_override()
     test_disable_debug_checks_pods_before_uninstall()
     print("remote-debug Make contracts passed")
 

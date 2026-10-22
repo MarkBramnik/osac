@@ -72,7 +72,8 @@ USER 1001
 # runtime-debug to retain source-level debugging information in the Go binary.
 FROM runtime-base AS runtime-debug
 COPY --from=dlv-builder /opt/app-root/src/go/bin/dlv /usr/local/bin
-COPY --from=builder /opt/app-root/src/fulfillment-service/hack/debug-entrypoint.sh /usr/local/bin/debug-entrypoint
+COPY --chmod=0555 tools/debug-entrypoint.sh /usr/local/bin/debug-entrypoint
+ENV OSAC_DEBUGGEE_BIN=/usr/local/bin/fulfillment-service
 
 # Default (non-debug) runtime — must stay last so plain `podman build .` targets it.
 FROM runtime-base AS runtime

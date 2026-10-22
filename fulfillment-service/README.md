@@ -278,6 +278,12 @@ $ make -C ../osac-installer test PLATFORM=kind PROFILE=dev NS=osac SUITE=fulfill
 $ make -C ../osac-installer uninstall PLATFORM=kind PROFILE=dev NS=osac
 ```
 
+`SUITE=fulfillment` also builds and loads the Delve-enabled image after the
+normal API tests, switches the four Fulfillment Deployments to paused debug
+mode, attaches to each through `kubectl port-forward`, and restores the normal
+image. Direct `ginkgo run it` runs the API tests only; use the installer target
+for debug-image coverage and cleanup.
+
 The integration tests use TLS with SNI (_Server Name Indication_) routing through the Envoy Gateway.
 This means that the services are accessed using their Kubernetes internal host names, but routed
 through `127.0.0.1:8000` which is exposed by the Kind cluster.
@@ -297,7 +303,8 @@ Add the following entries to your `/etc/hosts` file:
 ```
 
 Or, against a cluster where the fulfillment-service image is already deployed, run `ginkgo`
-directly -- it only connects and exercises the suite, it does not build, load, or deploy anything:
+directly to exercise the API suite. The debug-image phase is orchestrated by the installer target,
+which builds, loads, switches, and restores the image:
 
 ```bash
 $ cd fulfillment-service && ginkgo run it

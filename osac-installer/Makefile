@@ -516,13 +516,23 @@ ifeq ($(SUITE),fulfillment)
 	$(MAKE) install-osac PLATFORM=$(PLATFORM) PROFILE=$(PROFILE) NS=$(NS) \
 		EXTRA_HELM_ARGS="--set service.images.service.repository=localhost/fulfillment-service --set service.images.service.tag=it --set service.images.service.pullPolicy=Never --set service.controller.sync=false --set global.services.bmaas.enabled=false --set operator.enabled=false --set operator.networkManagers.enabled=true --set global.networking.networkClass.enabled=false"
 	cd ../fulfillment-service && KIND_CLUSTER="$(KIND_CLUSTER_NAME)" IT_HTTPS_PORT="$(FULFILLMENT_IT_HTTPS_PORT)" IT_TEST_SUITE=bmaas-disabled ginkgo run --timeout 1h -v --focus 'Service enablement' it
+	$(call kind-container-build,--build-arg GODEBUG=$(GODEBUG) --build-arg DEBUG=true --target runtime-debug -t localhost/fulfillment-service:it-debug -f ../fulfillment-service/Containerfile ..)
+	cd ../fulfillment-service && \
+		IT_DEBUG_IMAGE=localhost/fulfillment-service:it-debug \
+		IT_DEBUG_NORMAL_IMAGE=localhost/fulfillment-service:it \
+		IT_DEBUG_PROFILE="$(PROFILE)" \
+		IT_DEBUG_NAMESPACE="$(NS)" \
+		IT_DEBUG_CLUSTER_NAME="$(KIND_CLUSTER_NAME)" \
+		IT_DEBUG_EXTRA_HELM_ARGS="--set service.enabled=true --set service.images.service.pullPolicy=Never --set service.controller.sync=false --set global.services.bmaas.enabled=false --set operator.enabled=false --set operator.networkManagers.enabled=true --set global.networking.networkClass.enabled=false" \
+		ginkgo run --timeout 20m -v --focus 'Fulfillment debug image' it
 endif
 ifeq ($(SUITE),operator)
 	$(call kind-container-build,--build-arg GODEBUG=$(GODEBUG) -t localhost/osac-operator:it -f ../osac-operator/Containerfile ..)
 	$(call kind-load-image,localhost/osac-operator:it)
 	$(MAKE) install-osac PLATFORM=$(PLATFORM) PROFILE=$(PROFILE) NS=$(NS) \
 		EXTRA_HELM_ARGS="--set operator.image.repository=localhost/osac-operator --set operator.image.tag=it --set operator.image.pullPolicy=Never --set operator.fulfillment.serverAddress= --set service.enabled=false --set hubAccess.enabled=false --set validation.enabled=false --set global.fulfillmentTrust.enabled=false --set global.networking.networkClass.enabled=false"
-	cd ../osac-operator && ginkgo run --timeout 30m -v test/integration
+	$(MAKE) -C ../osac-operator integration-tests KIND_CLUSTER_NAME="$(KIND_CLUSTER_NAME)" \
+		CONTAINER_TOOL="$(CONTAINER_TOOL)" PROFILE="$(PROFILE)" NS="$(NS)"
 endif
 ifeq ($(SUITE),bmf)
 	$(call kind-container-build,--build-arg GODEBUG=$(GODEBUG) -t localhost/bmf-operator:it -f ../bare-metal-fulfillment-operator/Containerfile ..)
