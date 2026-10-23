@@ -15,8 +15,10 @@ not include or run Delve.
 
 With debug enabled, the target container runs Delve as PID 1. Delve launches the
 unoptimized Go process and listens on IPv4 loopback (`127.0.0.1:2345`) inside the
-Pod. The developer connects through a local port-forward; no Service or Route exposes
-Delve. One `install-services` invocation updates the existing `osac` Helm
+Pod and accepts reconnecting IDE sessions. The `debug-me` helper uses
+`port-forward` by default; a target can opt into an IPv4-only `exec` tunnel to
+bypass a cluster port-forward backend that resolves `localhost` to IPv6. No
+Service or Route exposes Delve. One `install-services` invocation updates the existing `osac` Helm
 release rather than creating duplicate Deployments. Fulfillment uses one shared
 debug image for its four supported Deployments. `CONTINUE=true` is the default;
 set `CONTINUE=false` to pause the selected processes until IDE attach.
@@ -121,11 +123,13 @@ Pod, inspect it, and stop the local tunnel when done:
 ./debug.sh start <fulfillment-pod-name> -n osac -c grpc-server
 ```
 
-`start` reuses the prestarted Delve server in the OSAC debug image and forwards
-its port to workstation loopback. It prints a VS Code remote-attach
+`start` reuses the prestarted Delve server in the OSAC debug image and uses the
+configured transport. The default is Kubernetes `port-forward`; set
+`transport: exec` on a target to create an IPv4-only exec tunnel that avoids
+the cluster port-forward backend. It prints a VS Code remote-attach
 configuration named `Remote Debug: [osac-operator]`; place it inside the
 `configurations` array in `.vscode/launch.json`. `stop` only stops the local
-port-forward for this prestarted-server mode.
+transport for this prestarted-server mode.
 
 ## 5. Helm differences from a regular deployment
 
@@ -139,5 +143,6 @@ port-forward for this prestarted-server mode.
   debug mode so a long breakpoint does not expire the manager's Lease.
 - Use one isolated debug manager and ensure no other OSAC operator instance
   reconciles the same resources. Normal mode keeps leader election enabled.
-- Delve is available only through port-forwarding; the chart creates no Service
-  or Route for it.
+- Delve is available only through local port-forwarding by default or the
+  authenticated exec tunnel when explicitly selected; it binds to IPv4 loopback
+  and the chart creates no Service or Route for it.

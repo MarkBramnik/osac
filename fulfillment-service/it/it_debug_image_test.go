@@ -84,9 +84,12 @@ var _ = Describe("Fulfillment debug image", func() {
 			Expect(container.SecurityContext.Capabilities.Add).To(ContainElement("SYS_PTRACE"))
 			Expect(pod.Spec.SecurityContext.SeccompProfile.Type).To(Equal("Unconfined"))
 
-			output, err := runFulfillmentDebugAttach(namespace, pod.Metadata.Name)
-			Expect(err).NotTo(HaveOccurred(), string(output))
-			Expect(string(output)).To(ContainSubstring("thread(s), paused"))
+			for attempt := 1; attempt <= 2; attempt++ {
+				By(fmt.Sprintf("attaching to %s, session %d", workload.process, attempt))
+				output, err := runFulfillmentDebugAttach(namespace, pod.Metadata.Name)
+				Expect(err).NotTo(HaveOccurred(), string(output))
+				Expect(string(output)).To(ContainSubstring("thread(s), paused"))
+			}
 		}
 	})
 })

@@ -48,15 +48,17 @@ attaches. The console proxy remains on the normal image.
 The access path is:
 
 ```text
-IDE -> 127.0.0.1:<localPort> -> kubectl/oc port-forward
-    -> Pod port 2345 -> Delve (PID 1) -> manager-debug
+IDE -> 127.0.0.1:<localPort> -> debug-me transport
+    -> default: kubectl/oc port-forward -> Pod port 2345
+    -> optional exec: kubectl/oc exec -> Bash /dev/tcp/127.0.0.1:2345
+    -> Delve (PID 1) -> manager-debug
 ```
 
-Delve's API is unauthenticated, so it is bound to loopback in the Pod and exposed
-only through port-forwarding. Do not expose it with a Service or Route.
-`oc port-forward --address 127.0.0.1` restricts the workstation-side listener;
-it does not control the address used by the cluster-side port-forward backend.
-That backend is outside these image entrypoints.
+Delve's API is unauthenticated, so it is bound to IPv4 loopback in the Pod. The
+`debug-me` helper uses port-forward by default. Its optional `transport: exec`
+mode uses authenticated exec streaming and Bash's IPv4 `/dev/tcp` support,
+bypassing a cluster port-forward backend that dials `localhost` as IPv6. Do not
+expose Delve with a Service or Route.
 
 ### Fulfillment service image and processes
 
@@ -433,8 +435,10 @@ If the OpenShift kubeconfig is not the current default, prefix the commands with
 
 The helper prefers a prestarted headless Delve server, as used by the OSAC debug
 image. In that mode, `start` does not install or attach another debugger; it
-starts a workstation-side port-forward bound to `127.0.0.1` and prints a VS Code
-remote-attach configuration. The printed object belongs inside the
+starts the configured transport with a workstation-side listener bound to
+`127.0.0.1` and prints a VS Code remote-attach configuration. The default
+transport is `port-forward`; set `transport: exec` in a target's
+`debug-config.yaml` to opt into the IPv4 exec tunnel. The printed object belongs inside the
 `configurations` array of `.vscode/launch.json`. Its name is
 `Remote Debug: [<workload-name>]`, and its source paths come from
 `substitutePath`. Process discovery ignores Go's `** telemetry **` subprocess,
@@ -446,7 +450,7 @@ release, uploads it to writable `/tmp`, and attaches to the configured `pid`.
 The container then needs the required shell utilities, writable/executable
 `/tmp`, `SYS_PTRACE` where needed, and a seccomp/SCC policy that permits tracing.
 
-For a prestarted server, `stop` stops only the local port-forward; Delve and the
+For a prestarted server, `stop` stops only the local tunnel; Delve and the
 manager in the Pod continue running. `status` checks the Delve listener and
 tunnel, but a running listener does not guarantee that the manager child is
 still alive. Delve is PID 1, so the Pod may remain `Running` after the manager
@@ -462,7 +466,8 @@ kubectl rollout restart deployment/osac-operator -n osac
 | Debug chart difference | Why it is needed |
 |---|---|
 | Manager image and command switch to the debug image and `debug-entrypoint`; the debug image adds `manager-debug` and `dlv`. | Delve needs the unoptimized Go binary and starts it as its debuggee. The normal image remains free of the Delve executable. |
-| Container port `2345` is declared, but no Service or Route is created. | Delve is accessed only through local port-forwarding; its API is unauthenticated. |
+| Container port `2345` is declared, but no Service or Route is created. | Delve is accessed by local port-forward by default or the authenticated exec tunnel when selected; its API is unauthenticated and remains loopback-only. |
+| Delve uses `--accept-multiclient` whether the debuggee starts paused or continues. | The tunnel can verify the RPC endpoint before IDE attach, and a disconnected IDE can reconnect without restarting the Pod. Delve remains loopback-only. |
 | `--leader-elect=false` in debug; `--leader-elect=true` otherwise. | A breakpoint pauses the manager, including Lease renewal. Disabling election prevents a long intentional pause from causing leader-election loss and manager exit. Debug mode must use one isolated manager to avoid concurrent reconciliation. |
 | Manager liveness and readiness probes are omitted. | Delve can be running while its manager is paused for an IDE attach; normal manager probes would fail or cause unwanted restarts. Helm waits for the Delve container, not for the manager to resume. |
 | The debug container requests `SYS_PTRACE`, uses unconfined seccomp, and mounts a writable `/tmp` `emptyDir`; the root filesystem remains read-only and all other capabilities are dropped. | Delve needs to trace the Go process and has temporary runtime files. OpenShift admits this only with the debug SCC. |
@@ -481,7 +486,7 @@ OpenShift, remove the temporary SCC afterward with
 | Debug chart difference | Why it is needed |
 |---|---|
 | The four supported containers use the shared debug image and `/usr/local/bin/debug-entrypoint`; their normal image remains selected when `service.debug.enabled=false`. | The same binary image runs each service subcommand, so the image is built and pushed once without overwriting the normal repository/tag. |
-| Delve listens on `127.0.0.1:2345`; only a `containerPort` is declared. No `hostPort`, Service, or Route is added. | `debug-me` uses authenticated Pod port-forwarding to reach Delve's unauthenticated API. |
+| Delve listens on IPv4 loopback `127.0.0.1:2345`; only a `containerPort` is declared. No `hostPort`, Service, or Route is added. | `debug-me` uses port-forward by default or authenticated exec streaming when the target opts into it; the API remains unauthenticated and loopback-only. |
 | Probes are omitted in debug mode. The controller, gRPC server, and REST gateway retain `RollingUpdate` but use `maxSurge: 0` and `maxUnavailable: 100%`; the event publisher remains `Recreate`. | Debug rollouts stop old Pods before creating replacements, preventing overlapping Delve sessions without changing the strategy type on existing Deployments. |
 | Debug containers request `SYS_PTRACE`, use unconfined seccomp, mount writable `/tmp`, and set `HOME`/`TMPDIR` there. Existing read-only root filesystems and dropped capabilities are retained where configured. | Delve needs tracing permissions and temporary writable storage; OpenShift admits these settings only with the temporary debug SCC. |
 | `CONTINUE=true` is the default for the operator and all four Fulfillment processes; set `CONTINUE=false` or the component-specific flag to pause for IDE attach. | Paused processes wait for IDE attach, but the service APIs, controller, and event publisher are unavailable until resumed. |

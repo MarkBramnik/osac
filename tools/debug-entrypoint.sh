@@ -22,6 +22,7 @@ false)
 		--listen="$debug_listen" \
 		--api-version=2 \
 		--only-same-user=false \
+		--accept-multiclient \
 		exec "$debuggee" -- "$@"
 	;;
 *)

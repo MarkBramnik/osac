@@ -99,13 +99,16 @@ var _ = Describe("Operator debug image", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(strings.TrimSpace(string(output))).To(Equal(debugImage))
 
-		By("attaching to the paused manager and listing its real debuggee thread")
+		By("attaching twice to the paused manager and listing its real debuggee thread")
 		attachHelper := os.Getenv("OSAC_DEBUG_ATTACH_HELPER")
 		Expect(attachHelper).NotTo(BeEmpty(), "integration-tests supplies the shared Delve attach helper")
-		output, err = runDebugImageCommand(45*time.Second, "python3", attachHelper,
-			"--namespace", namespace, "--pod", podName)
-		Expect(err).NotTo(HaveOccurred(), string(output))
-		Expect(string(output)).To(ContainSubstring("thread(s), paused"))
+		for attempt := 1; attempt <= 2; attempt++ {
+			By(fmt.Sprintf("opening Delve RPC session %d", attempt))
+			output, err := runDebugImageCommand(45*time.Second, "python3", attachHelper,
+				"--namespace", namespace, "--pod", podName)
+			Expect(err).NotTo(HaveOccurred(), string(output))
+			Expect(string(output)).To(ContainSubstring("thread(s), paused"))
+		}
 	})
 })
 
