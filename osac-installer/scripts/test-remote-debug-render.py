@@ -222,13 +222,20 @@ def test_combined_services_debug_render_validates_without_skipping_schema() -> N
         and item.get("metadata", {}).get("name") == "fulfillment-debug"
         for item in docs
     ) == 1
+    operator_debug_service_account = next(
+        item
+        for item in docs
+        if item.get("kind") == "ServiceAccount"
+        and item.get("metadata", {}).get("name") == "osac-operator-debug"
+    )
+    assert operator_debug_service_account["automountServiceAccountToken"] is True
     fulfillment_debug_service_account = next(
         item
         for item in docs
         if item.get("kind") == "ServiceAccount"
         and item.get("metadata", {}).get("name") == "fulfillment-debug"
     )
-    assert fulfillment_debug_service_account["automountServiceAccountToken"] is False
+    assert fulfillment_debug_service_account["automountServiceAccountToken"] is True
     assert "livenessProbe" not in controller
     assert controller_deployment["spec"]["template"]["metadata"]["annotations"][
         "kubectl.kubernetes.io/restartedAt"
@@ -324,6 +331,8 @@ def test_fulfillment_debug_upgrade_changes_only_four_processes() -> None:
         ] == ROLLOUT_TOKEN
         pod_spec = deployment["spec"]["template"]["spec"]
         assert pod_spec["serviceAccountName"] == "fulfillment-debug"
+        if deployment_name == "fulfillment-event-publisher":
+            assert pod_spec["automountServiceAccountToken"] is True
         strategy = deployment["spec"]["strategy"]
         if deployment_name != "fulfillment-event-publisher":
             assert strategy["type"] == "RollingUpdate"
@@ -402,6 +411,15 @@ def test_fulfillment_debug_disabled_uses_normal_image_and_probes() -> None:
     assert grpc["command"] == ["/usr/local/bin/fulfillment-service"]
     assert "livenessProbe" in grpc
     assert "readinessProbe" in grpc
+    event_publisher_deployment, _ = deployment_container(
+        docs, "fulfillment-event-publisher", "event-publisher"
+    )
+    assert (
+        event_publisher_deployment["spec"]["template"]["spec"][
+            "automountServiceAccountToken"
+        ]
+        is False
+    )
 
 
 def test_fulfillment_debug_requires_an_image_reference() -> None:

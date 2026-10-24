@@ -39,7 +39,7 @@ spec:
       {{ if .Values.debug.enabled }}
       serviceAccountName: fulfillment-debug
       {{ end }}
-      automountServiceAccountToken: false
+      automountServiceAccountToken: {{ .Values.debug.enabled }}
       {{ if .Values.debug.enabled }}
       securityContext:
         seccompProfile:

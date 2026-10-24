@@ -76,6 +76,8 @@ it return to profile values.
 The umbrella chart creates separate `osac-operator-debug` and
 `fulfillment-debug` ServiceAccounts for the selected components. The operator
 debug identity carries operator RBAC; Fulfillment debug pods do not share it.
+The debug identities mount their own ServiceAccount tokens; normal Fulfillment
+event-publisher Pods keep automount disabled.
 Each selected service is forced through a rollout on every invocation, even if
 the pushed image reuses its previous tag. Selecting `fulfillment-service` rolls
 all four of its Deployments and disconnects existing IDE sessions.

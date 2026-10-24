@@ -42,6 +42,17 @@ def deployment_for_container(docs: list[dict], container_name: str) -> tuple[dic
 
 
 def test_debug_off_is_unchanged(docs: list[dict]) -> None:
+    service_accounts = {
+        item.get("metadata", {}).get("name"): item
+        for item in docs
+        if item.get("kind") == "ServiceAccount"
+    }
+    assert service_accounts["remote-debug-test-osac-operator"][
+        "automountServiceAccountToken"
+    ] is True
+    assert service_accounts["remote-debug-test-osac-operator-console-proxy"][
+        "automountServiceAccountToken"
+    ] is True
     manager_deployment, manager = deployment_for_container(docs, "manager")
     pod_security = manager_deployment["spec"]["template"]["spec"]["securityContext"]
     assert pod_security["seccompProfile"]["type"] == "RuntimeDefault"
@@ -77,6 +88,7 @@ def test_debug_on_is_manager_only(docs: list[dict], continue_value: str) -> None
         and item.get("metadata", {}).get("name") == "osac-operator-debug"
     ]
     assert len(debug_service_accounts) == 1
+    assert debug_service_accounts[0]["automountServiceAccountToken"] is True
     assert manager["command"] == ["/usr/local/bin/debug-entrypoint"]
     assert manager["image"] == "registry.example.test/osac-operator:dev-debug"
     assert "--leader-elect=false" in manager["args"]
