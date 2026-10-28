@@ -40,8 +40,8 @@ for scc in osac-remote-debug osac-operator-debug; do
 done
 
 TEST_NAMESPACE="${OSAC_DEBUG_SCC_TEST_NAMESPACE:-osac-debug-scc-it-$(date +%s)-$$}"
-TEST_PODS=(osac-operator-debug-probe fulfillment-debug-probe)
-TEST_SERVICE_ACCOUNTS=(osac-operator-debug fulfillment-debug)
+TEST_PODS=(osac-operator-debug-probe fulfillment-debug-probe csi-driver-controller-debug-probe)
+TEST_SERVICE_ACCOUNTS=(osac-operator-debug fulfillment-debug csi-driver-controller-debug)
 TEST_IMAGE="${OSAC_DEBUG_SCC_TEST_IMAGE:-registry.access.redhat.com/ubi10-minimal:1791444565}"
 if [[ ! "${TEST_NAMESPACE}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ || ${#TEST_NAMESPACE} -gt 63 ]]; then
   echo "ERROR: test namespace must be a Kubernetes DNS label of at most 63 characters." >&2
@@ -98,9 +98,10 @@ for service_account in "${TEST_SERVICE_ACCOUNTS[@]}"; do
 	kubectl create serviceaccount "${service_account}" --namespace "${TEST_NAMESPACE}"
 done
 
-echo "Installing the managed SCC for the two named debug ServiceAccounts in ${TEST_NAMESPACE}..."
+echo "Installing the managed SCC for three named debug ServiceAccounts in ${TEST_NAMESPACE}..."
 scc_enable_attempted=true
-make -C "${INSTALLER_DIR}" enable-debug NS="${TEST_NAMESPACE}" KUBECONFIG="${KUBECONFIG}"
+make -C "${INSTALLER_DIR}" enable-debug NS="${TEST_NAMESPACE}" \
+	CSI_DRIVER_NAMESPACE="${TEST_NAMESPACE}" KUBECONFIG="${KUBECONFIG}"
 
 create_probe_pod() {
   local pod_name="$1" service_account="$2"
@@ -148,8 +149,8 @@ done
 
 assigned_users="$(kubectl get scc osac-remote-debug -o jsonpath='{.users[*]}')"
 read -r -a actual_users <<< "${assigned_users}"
-if [[ "${#actual_users[@]}" -ne 2 ]]; then
-	echo "ERROR: expected exactly two named SCC users, got: ${assigned_users}" >&2
+if [[ "${#actual_users[@]}" -ne 3 ]]; then
+	echo "ERROR: expected exactly three named SCC users, got: ${assigned_users}" >&2
 	exit 1
 fi
 for service_account in "${TEST_SERVICE_ACCOUNTS[@]}"; do

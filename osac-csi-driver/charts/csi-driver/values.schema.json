@@ -9,6 +9,49 @@
         "",
         "osac-csi"
       ]
+    },
+    "debug": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "image": {"type": "string", "minLength": 1},
+        "imagePullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        },
+        "continue": {"type": "boolean", "default": true},
+        "nodeContinue": {"type": "boolean", "default": true},
+        "fsGroup": {
+          "oneOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "string", "enum": ["auto"]}
+          ],
+          "default": "auto"
+        },
+        "rolloutToken": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "controller": {
+          "type": "object",
+          "properties": {
+            "create": {"type": "boolean"},
+            "name": {"type": "string"},
+            "debugName": {"type": "string"}
+          }
+        },
+        "node": {
+          "type": "object",
+          "properties": {
+            "create": {"type": "boolean"},
+            "name": {"type": "string"},
+            "debugName": {"type": "string"}
+          }
+        }
+      }
     }
   },
   "additionalProperties": true

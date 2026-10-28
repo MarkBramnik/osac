@@ -31,7 +31,46 @@ make test         # Run tests
 make lint         # Run golangci-lint
 make image-build  # Build container image
 make image-push   # Push container image
+make image-build-debug IMAGE_PLATFORM=linux/amd64
+make image-push-debug
+make test-debug-entrypoint
+make remote-debug-render-test
 ```
+
+## Remote debugging
+
+The installer supports `csi-driver` as a service in `SERVICES` and exposes a
+standalone `install-csi-driver` target. It upgrades the separate CSI Helm
+release (the current install is release `csi-driver` in namespace `osac-csi`);
+the CSI chart is not part of the `osac` umbrella release.
+
+```bash
+make -C ../osac-installer install-csi-driver \
+  PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
+  DEBUG=true IMAGE_PLATFORM=linux/amd64 \
+  CSI_DRIVER_SERVICE_IMAGE=quay.io/<your-org>/osac-csi-driver:debug
+```
+
+The same image is used by the controller Deployment and node DaemonSet. Both
+continue by default. `CSI_DRIVER_DEBUG_CONTINUE=false` pauses the controller;
+`CSI_DRIVER_NODE_DEBUG_CONTINUE=false` pauses the driver on **every node** and
+can disrupt CSI operations cluster-wide. On OpenShift, enable the remote-debug
+SCC first with `make -C ../osac-installer enable-debug NS=osac`.
+
+To run the actual attach/reattach smoke test, use a disposable Kind cluster with
+no existing `osac-csi` namespace, `csi-driver` release, or
+`csi.osac.openshift.io` CSIDriver:
+
+```bash
+OSAC_CSI_DEBUG_IT_APPROVED=true \
+KUBECONFIG="$HOME/.kube/osac-dev-kind.kubeconfig" \
+KIND_CLUSTER_NAME=osac-dev make remote-debug-integration-test
+```
+
+The test builds and loads the image, installs a temporary CSI release, attaches
+twice to the controller and every node Pod, then removes its release and
+namespace. It refuses to run without the approval variable and matching Kind
+context.
 
 ## Configuration
 

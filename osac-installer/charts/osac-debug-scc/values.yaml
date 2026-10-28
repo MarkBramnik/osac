@@ -1,1 +1,2 @@
 targetNamespace: osac
+csiDriverNamespace: osac-csi

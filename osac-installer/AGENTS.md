@@ -53,10 +53,11 @@ respective areas.
 | Fulfillment token helper or dev-full hook credential wiring | Unit and Helm contract | `make fulfillment-auth-test` and `make dev-full-render-test` |
 | Deployed dev-full hook authentication | Component integration | Coverage gap tracked by [OSAC-4843](https://redhat.atlassian.net/browse/OSAC-4843); local `install-devstack` invokes the hooks but does not assert token acceptance. |
 | OpenBao security context, podSecurityContext, or Kind/OpenShift UID handling | Helm contract | `make openbao-security-context-test` |
-| Remote-debug Make argument/image workflow | Unit with Make and command stubs | `make remote-debug-make-test`; no image build, registry push, or cluster API is invoked |
-| Operator/Fulfillment debug and SCC manifest wiring | Helm contract | `make remote-debug-render-test`; Helm and local charts are real, image references are synthetic, no cluster or Delve process is started |
+| Remote-debug Make argument/image workflow, including standalone CSI install | Unit with Make and command stubs | `make remote-debug-make-test`; no image build, registry push, or cluster API is invoked |
+| Operator/Fulfillment/CSI debug chart and SCC wiring | Helm contract | `make remote-debug-render-test`; Helm and local charts are real, image references are synthetic, no cluster or Delve process is started |
 | Deployed hooks or cross-component startup | Component integration | `make test PLATFORM=kind PROFILE=dev NS=osac SUITE=fulfillment` with a deployed Kind environment; see [suite boundaries](../docs/INTEGRATION-TESTING.md#osac-installer) |
 | OpenShift remote-debug SCC admission and removal guard | Manual component integration | `OSAC_DEBUG_SCC_IT_APPROVED=true KUBECONFIG=<approved-cluster> make remote-debug-scc-integration-test`; only on a disposable or admin-coordinated cluster |
+| CSI debug image startup and attach/re-attach | Manual component integration owned by CSI driver | `OSAC_CSI_DEBUG_IT_APPROVED=true KUBECONFIG=<disposable-kind-kubeconfig> make -C ../osac-csi-driver remote-debug-integration-test`; refuses pre-existing CSI namespace/release/driver |
 | Fulfillment debug image build/load, rollout, attach, and restoration orchestration | Component integration owned by Fulfillment | `make test PLATFORM=kind PROFILE=dev NS=osac SUITE=fulfillment`; see [Fulfillment debug coverage](../docs/INTEGRATION-TESTING.md#fulfillment-service) |
 
 ## Validation

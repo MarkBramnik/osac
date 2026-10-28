@@ -37,9 +37,11 @@ See [suite boundaries and coverage gaps](../docs/INTEGRATION-TESTING.md#osac-csi
 |---|---|---|
 | Request/response mapping, validation, or driver helpers | Unit | `make test` |
 | CSI controller/node routing or CSI protocol behavior | Unit (CSI sanity) | `make test` |
+| Shared Delve entrypoint argument handling | Unit shell contract with a fake `dlv` executable | `make test-debug-entrypoint`; does not build or run the debug image |
+| Debug image startup and CSI controller/node attach wiring | Component integration on disposable Kind | `OSAC_CSI_DEBUG_IT_APPROVED=true KUBECONFIG=<kind-kubeconfig> make remote-debug-integration-test`; attaches twice to the controller and every node Pod, without exercising storage lifecycle |
 | Fulfillment private Volume API contract | Contract or E2E | Regenerate with `buf generate`, then qualifying cross-component suite |
 | Vendor attach, detach, mount, or storage lifecycle | Component integration or E2E | Required suite is currently unavailable; track [OSAC-4845](https://redhat.atlassian.net/browse/OSAC-4845) |
-| Helm/deployment changes | Helm validation plus applicable E2E | `helm lint charts/csi-driver`; `helm lint charts/csi-backends` |
+| Helm/deployment changes, including debug rollout and identity wiring | Helm validation plus applicable E2E | `make remote-debug-render-test`; `helm lint charts/csi-driver`; `helm lint charts/csi-backends` |
 
 CSI sanity uses a fake vendor and fulfillment stub; it does not cover a real backend.
 
@@ -58,9 +60,12 @@ make fmt
 make vet
 make lint
 make test                  # Unit and CSI sanity tests
+make test-debug-entrypoint # Shared Delve launcher contract
+make remote-debug-render-test
 helm lint charts/csi-driver
 helm lint charts/csi-backends
 make image-build IMG=<registry>/osac-csi-driver:<tag>
+make image-build-debug DEBUG_IMG=<registry>/osac-csi-driver:<tag>
 ```
 
 Run image builds with a registry tag only when the container or deployment

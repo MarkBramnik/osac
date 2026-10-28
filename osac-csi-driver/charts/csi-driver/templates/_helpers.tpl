@@ -43,10 +43,16 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 Controller service account name.
 */}}
 {{- define "csi-driver.controllerServiceAccountName" -}}
+{{- $name := "" -}}
 {{- if .Values.serviceAccount.controller.name }}
-{{- .Values.serviceAccount.controller.name }}
+{{- $name = .Values.serviceAccount.controller.name }}
 {{- else }}
-{{- include "csi-driver.fullname" . }}-controller
+{{- $name = printf "%s-controller" (include "csi-driver.fullname" .) }}
+{{- end }}
+{{- if .Values.debug.enabled }}
+{{- default (printf "%s-debug" $name) .Values.serviceAccount.controller.debugName }}
+{{- else }}
+{{- $name }}
 {{- end }}
 {{- end }}
 
@@ -54,10 +60,16 @@ Controller service account name.
 Node service account name.
 */}}
 {{- define "csi-driver.nodeServiceAccountName" -}}
+{{- $name := "" -}}
 {{- if .Values.serviceAccount.node.name }}
-{{- .Values.serviceAccount.node.name }}
+{{- $name = .Values.serviceAccount.node.name }}
 {{- else }}
-{{- include "csi-driver.fullname" . }}-node
+{{- $name = printf "%s-node" (include "csi-driver.fullname" .) }}
+{{- end }}
+{{- if .Values.debug.enabled }}
+{{- default (printf "%s-debug" $name) .Values.serviceAccount.node.debugName }}
+{{- else }}
+{{- $name }}
 {{- end }}
 {{- end }}
 

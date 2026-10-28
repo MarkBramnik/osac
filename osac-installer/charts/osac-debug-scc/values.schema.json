@@ -8,8 +8,15 @@
       "minLength": 1,
       "maxLength": 63,
       "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "csiDriverNamespace": {
+      "type": "string",
+      "description": "Namespace containing the CSI controller debug ServiceAccount",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
     }
   },
-  "required": ["targetNamespace"],
+  "required": ["targetNamespace", "csiDriverNamespace"],
   "additionalProperties": false
 }

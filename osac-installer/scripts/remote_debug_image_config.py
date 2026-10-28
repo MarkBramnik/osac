@@ -18,6 +18,7 @@ IMAGE_REFERENCE_CHARS = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 SERVICE_IMAGE_VARIABLES = {
     "osac-operator": "OSAC_OPERATOR_IMAGE",
     "fulfillment-service": "FULFILLMENT_SERVICE_IMAGE",
+    "csi-driver": "CSI_DRIVER_SERVICE_IMAGE",
 }
 
 
@@ -25,6 +26,7 @@ SERVICE_IMAGE_VARIABLES = {
 class ResolvedImages:
     osac_operator: str = ""
     fulfillment_service: str = ""
+    csi_driver: str = ""
 
 
 def _validate_image(value: str, variable: str) -> str:
@@ -96,6 +98,7 @@ def resolve_images(
     platform: str,
     osac_operator_image: str = "",
     fulfillment_service_image: str = "",
+    csi_driver_service_image: str = "",
 ) -> ResolvedImages:
     services = parse_services(services_value)
     debug_enabled = parse_bool(debug_value, "DEBUG")
@@ -110,6 +113,7 @@ def resolve_images(
     cli_images = {
         "osac-operator": osac_operator_image,
         "fulfillment-service": fulfillment_service_image,
+        "csi-driver": csi_driver_service_image,
     }
     resolved: dict[str, str] = {}
     for service, variable in SERVICE_IMAGE_VARIABLES.items():
@@ -143,6 +147,7 @@ def resolve_images(
     return ResolvedImages(
         osac_operator=resolved["osac-operator"],
         fulfillment_service=resolved["fulfillment-service"],
+        csi_driver=resolved["csi-driver"],
     )
 
 
@@ -156,6 +161,7 @@ def resolve_from_environment() -> ResolvedImages:
         platform=os.environ.get("PLATFORM", ""),
         osac_operator_image=os.environ.get("OSAC_OPERATOR_IMAGE", ""),
         fulfillment_service_image=os.environ.get("FULFILLMENT_SERVICE_IMAGE", ""),
+        csi_driver_service_image=os.environ.get("CSI_DRIVER_SERVICE_IMAGE", ""),
     )
 
 
@@ -181,6 +187,7 @@ def main() -> int:
                 (
                     f"{mode_name}-operator={mode_images.get('osac-operator', '-')}",
                     f"{mode_name}-fulfillment={mode_images.get('fulfillment-service', '-')}",
+                    f"{mode_name}-csi-driver={mode_images.get('csi-driver', '-')}",
                 )
             )
         print(" ".join(fields))

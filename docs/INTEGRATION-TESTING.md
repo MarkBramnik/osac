@@ -638,6 +638,9 @@ Touched-area requirements: [component guide](../osac-csi-driver/AGENTS.md#integr
 |---|---|---|---|
 | Unit | Co-located Go tests; `make test` | Driver, node/controller mapping, fulfillment client, and validation logic in-process | Fulfillment service and vendor storage endpoints are mocked. |
 | Unit (CSI sanity) | `test/sanity/`; included by `make test` | CSI protocol calls over Unix sockets and the meta-driver's routing behavior | The vendor controller/node implementation is `fakeVendor`; fulfillment volume operations use a stub. |
+| Unit (debug entrypoint) | `make test-debug-entrypoint` | Shared Delve startup arguments for continue and paused modes using a fake `dlv` | Does not build the image or start Kubernetes workloads. |
+| Component integration (debug image) | `OSAC_CSI_DEBUG_IT_APPROVED=true KUBECONFIG=<disposable-kind-kubeconfig> make remote-debug-integration-test` from `osac-csi-driver/` | Real Delve startup and repeated attach to the CSI controller and every node DaemonSet Pod | Requires an empty disposable Kind cluster; uses the chart's fulfillment stub and does not exercise volume lifecycle or a real vendor. |
+| Helm render | `make remote-debug-render-test` from `osac-csi-driver/`; also run by installer remote-debug render tests | Controller/node debug image, continue mode, identities, RBAC, and SCC rendering | Does not contact a cluster or start Delve. |
 | Component integration | No dedicated real-backend suite currently exists | — | No real storage vendor, attach/detach, mount, or fulfillment deployment is exercised by `make test`. |
 | Contract | No dedicated contract suite; track [OSAC-4845](https://redhat.atlassian.net/browse/OSAC-4845) for vendor and fulfillment-boundary coverage | No deployed fulfillment or real vendor endpoint is exercised | Fulfillment and vendor calls use stubs and `fakeVendor`. |
 | E2E | `../tests/e2e/storage/` when enabled | Tenant/CaaS storage-controller lifecycle and StorageClass setup | These flows do not currently create a PVC through the OSAC CSI driver or verify CSI `CreateVolume`, node publish/mount, or pod I/O. They depend on the selected storage tier and environment gates. |
@@ -646,6 +649,7 @@ Touched-area requirements: [component guide](../osac-csi-driver/AGENTS.md#integr
 
 - **Request/response mapping, validation, or driver helpers:** Cover protocol errors and backend status mapping.
 - **CSI controller/node routing or CSI protocol behavior:** The sanity suite is required but remains fake-vendor coverage.
+- **Debug image startup or attach wiring:** The disposable-Kind debug smoke test verifies the controller and node workloads, not CSI volume operations. Pausing the node DaemonSet can disrupt CSI operations on every node.
 - **Fulfillment private Volume API contract:** A fake generated client does not prove compatibility with the deployed service.
 - **Vendor attach, detach, mount, or storage lifecycle:** The fake vendor cannot satisfy a real storage-backend requirement.
 - **Helm/deployment changes:** Build an image when container/deployment inputs change.

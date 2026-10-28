@@ -37,6 +37,18 @@ image:
   tag: main  # PLACEHOLDER -- overwritten at release time by osac-build-and-publish.yaml
   pullPolicy: Always
 
+# Debug mode wraps the controller and every node DaemonSet instance with Delve.
+# Pausing nodeContinue affects CSI operations on every node until each process
+# is resumed.
+debug:
+  enabled: false
+  image: ghcr.io/osac-project/osac-csi-driver:latest-debug
+  imagePullPolicy: IfNotPresent
+  continue: true
+  nodeContinue: true
+  fsGroup: auto
+  rolloutToken: ""
+
 controller:
   replicas: 1
   clusterID: ""
@@ -143,9 +155,11 @@ serviceAccount:
   controller:
     create: true
     name: ""
+    debugName: csi-driver-controller-debug
   node:
     create: true
     name: ""
+    debugName: csi-driver-node-debug
 
 vendors:
   trident:

@@ -72,8 +72,10 @@ clean: ## Remove build artifacts.
 ##@ Container
 
 .PHONY: image-build
-image-build: ## Build the container image.
-	$(CONTAINER_TOOL) build -f $(CONTAINERFILE) -t $(IMG) --build-arg VERSION=$(VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) ..
+image-build: ## Build the container image for IMAGE_PLATFORM.
+	$(CONTAINER_TOOL) build $(if $(strip $(IMAGE_PLATFORM)),--platform=$(IMAGE_PLATFORM)) \
+		-f $(CONTAINERFILE) -t $(IMG) --build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) ..
 
 .PHONY: image-push
 image-push: ## Push the container image.
@@ -87,3 +89,4 @@ kind-load-image: ## Load the built image into the dev-full Kind cluster.
 
 include $(shell git rev-parse --show-toplevel)/tools/golangci-lint.mk
 include $(shell git rev-parse --show-toplevel)/osac-installer/scripts/dev-full/kind-load-image.mk
+include make/remote-debug.mk

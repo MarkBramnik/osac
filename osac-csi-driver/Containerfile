@@ -1,8 +1,9 @@
 # Build context: mono-repo root (not osac-csi-driver/ alone).
 # Invoke with: podman build -f osac-csi-driver/Containerfile .
-FROM registry.access.redhat.com/ubi10/go-toolset:1.26.7-1791275880 AS builder
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/go-toolset:1.26.7-1791275880 AS builder
 ARG TARGETOS
 ARG TARGETARCH
+ARG DEBUG=false
 
 WORKDIR /opt/app-root/src
 # go.work.sum is intentionally not copied in -- it's not committed to the
@@ -32,11 +33,20 @@ WORKDIR /opt/app-root/src/osac-csi-driver
 ARG VERSION=0.1.0
 ARG GIT_COMMIT=unknown
 RUN [ -f /cachi2/cachi2.env ] && . /cachi2/cachi2.env; \
+    gcflags=""; \
+    if [ "${DEBUG}" = "true" ]; then gcflags="all=-N -l"; fi; \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -buildvcs=false -ldflags "-X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" \
-    -o osac-csi-driver ./cmd/osac-csi-driver
+    -gcflags="${gcflags}" -o osac-csi-driver ./cmd/osac-csi-driver
 
-FROM registry.access.redhat.com/ubi10-minimal:10.2-1790075626
+FROM builder AS debug-builder
+ARG TARGETOS
+ARG TARGETARCH
+RUN [ -f /cachi2/cachi2.env ] && . /cachi2/cachi2.env; \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -o dlv github.com/go-delve/delve/cmd/dlv
+
+FROM registry.access.redhat.com/ubi10-minimal:10.2-1790075626 AS runtime
 # Stamped to the real release version on osac-build-and-publish.yaml's
 # temp branch before tagging (same mechanism as Chart.yaml's own
 # version field). Surfaced as a real OCI label so Konflux's release-side
@@ -51,3 +61,8 @@ LABEL org.opencontainers.image.version="${VERSION}"
 COPY --from=builder /opt/app-root/src/osac-csi-driver/osac-csi-driver /usr/local/bin/
 USER 1001
 ENTRYPOINT ["/usr/local/bin/osac-csi-driver"]
+
+FROM runtime AS runtime-debug
+COPY --from=debug-builder /opt/app-root/src/osac-csi-driver/dlv /usr/local/bin/dlv
+COPY --chmod=0555 tools/debug-entrypoint.sh /usr/local/bin/debug-entrypoint
+ENV OSAC_DEBUGGEE_BIN=/usr/local/bin/osac-csi-driver

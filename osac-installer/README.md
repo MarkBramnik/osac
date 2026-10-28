@@ -472,27 +472,32 @@ make build-osac-operator \
 make build-fulfillment-service \
   DEBUG=true IMAGE_PLATFORM=linux/amd64 \
   FULFILLMENT_SERVICE_IMAGE=quay.io/<your-org>/fulfillment-service:dev-debug
+make build-csi-driver \
+  DEBUG=true IMAGE_PLATFORM=linux/amd64 \
+  CSI_DRIVER_SERVICE_IMAGE=quay.io/<your-org>/osac-csi-driver:dev-debug
 ```
 
-Use `install-services` to build and apply selected images/debug settings in one
-upgrade of the existing `osac` Helm release. By default, it builds only the
-services named in `SERVICES`, then performs one upgrade. Set `BUILD=false` to
-use already-built images without invoking the build targets. `SERVICES` is a
-comma-separated set of `osac-operator` and `fulfillment-service`; when
-`DEBUG=true`, all listed components use their debug images. The target loads
-local images into Kind, verifies the OpenShift debug SCC when needed, keeps
-normal Helm schema validation, and suppresses hooks. It uses profile values, so
-pass the same custom values and `EXTRA_HELM_ARGS` used for the existing
-installation.
+Use `install-services` to build and apply selected images/debug settings. It
+upgrades the existing `osac` release for `osac-operator` and
+`fulfillment-service`; it delegates `csi-driver` to the separate
+`install-csi-driver` target and its independent `csi-driver` Helm release in
+`osac-csi`. If CSI is the only selected service, the umbrella release is not
+upgraded. The releases are not atomic together. `SERVICES` is a comma-separated
+set of `osac-operator`, `fulfillment-service`, and `csi-driver`. `BUILD=false`
+uses already-built images. The targets load local images into Kind and verify
+the OpenShift debug SCC when needed.
 
 For each selected service, `install-services` changes the pod-template restart
-annotation, forcing its Deployments to roll out even when an image tag is
+annotation, forcing the selected workloads to roll out even when an image tag is
 unchanged. Selecting `fulfillment-service` rolls all four Fulfillment
-Deployments. In debug mode, this disconnects existing IDE sessions; paused
-processes wait for attach again.
+Deployments; selecting `csi-driver` rolls its controller Deployment and node
+DaemonSet. In debug mode, this disconnects existing IDE sessions; paused
+processes wait for attach again. Pausing CSI node processes can disrupt CSI
+operations on every node.
 
-Image references come from `OSAC_OPERATOR_IMAGE` and
-`FULFILLMENT_SERVICE_IMAGE` when those variables are set. Otherwise,
+Image references come from the matching `OSAC_OPERATOR_IMAGE`,
+`FULFILLMENT_SERVICE_IMAGE`, or `CSI_DRIVER_SERVICE_IMAGE` variable when set.
+Otherwise,
 `install-services` reads the selected mode's entries from
 `~/.config/osac/image-mappings.json`. A command-line image variable takes
 priority over its config entry. `PUSH=true` (the default) requires a reference
@@ -502,9 +507,10 @@ Kind.
 ```bash
 make install-services \
   PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
-  DEBUG=true SERVICES=osac-operator,fulfillment-service \
+  DEBUG=true SERVICES=osac-operator,fulfillment-service,csi-driver \
   OSAC_OPERATOR_IMAGE=quay.io/<your-org>/osac-operator:dev-debug \
   FULFILLMENT_SERVICE_IMAGE=quay.io/<your-org>/fulfillment-service:dev-debug \
+  CSI_DRIVER_SERVICE_IMAGE=quay.io/<your-org>/osac-csi-driver:dev-debug \
   IMAGE_PLATFORM=linux/amd64
 ```
 
@@ -516,26 +522,45 @@ The home-directory config can hold separate normal and debug references:
   "images": {
     "normal": {
       "osac-operator": "quay.io/<your-org>/osac-operator:dev",
-      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev"
+      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev",
+      "csi-driver": "quay.io/<your-org>/osac-csi-driver:dev"
     },
     "debug": {
       "osac-operator": "quay.io/<your-org>/osac-operator:dev-debug",
-      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev-debug"
+      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev-debug",
+      "csi-driver": "quay.io/<your-org>/osac-csi-driver:dev-debug"
     }
   }
 }
 ```
 
-On OpenShift, run `make enable-debug` first (the namespace defaults to `osac`)
-to grant the SCC only to the `osac-operator-debug` and `fulfillment-debug`
-ServiceAccounts. Set `NS=<namespace>` for a different namespace. Restore normal settings for all
-components and then remove the temporary SCC after no debug Pods use it:
+Run the CSI chart independently when needed; the currently installed defaults
+are release `csi-driver` in namespace `osac-csi`:
+
+```bash
+make install-csi-driver PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
+  DEBUG=true IMAGE_PLATFORM=linux/amd64 \
+  CSI_DRIVER_SERVICE_IMAGE=quay.io/<your-org>/osac-csi-driver:dev-debug \
+  CSI_DRIVER_VALUES_FILE=values/my-csi-driver.yaml
+```
+
+On OpenShift, run `make enable-debug` first. It grants the restricted debug SCC
+to the operator and Fulfillment debug ServiceAccounts in `NS` (default `osac`)
+and to `csi-driver-controller-debug` in `CSI_DRIVER_NAMESPACE` (default
+`osac-csi`). The CSI node identity remains governed by the CSI chart's own node
+SCC. Restore normal settings for all components and remove the temporary SCC
+only after no debug Pods use it:
 
 ```bash
 make install-services PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
-  BUILD=false DEBUG=false SERVICES=osac-operator,fulfillment-service
+  BUILD=false DEBUG=false SERVICES=osac-operator,fulfillment-service,csi-driver
 make disable-debug
 ```
+
+`CONTINUE` defaults to `true`. `CSI_DRIVER_DEBUG_CONTINUE` controls the
+controller, and `CSI_DRIVER_NODE_DEBUG_CONTINUE` independently controls every
+node DaemonSet instance. Setting the node flag to `false` pauses CSI on all nodes
+and can interrupt storage operations; the target emits a warning.
 
 For the full variable reference, Kind examples, attach workflow, and SCC safety
 notes, see [Remote debugging OSAC components](../docs/guides/developer/remote-debugging.md).

@@ -8,6 +8,16 @@
 {{- $caBundle := $fulfillment.tls.caBundle -}}
 {{- $caBundleConfigMap := $caBundle.configMap | default "" -}}
 {{- $caBundleKey := $caBundle.key | default "" -}}
+{{- $debugValues := .Values.debug | default dict -}}
+{{- $debugEnabled := $debugValues.enabled | default false -}}
+{{- $nodeContinueValue := index $debugValues "nodeContinue" -}}
+{{- $nodeContinue := ternary true $nodeContinueValue (eq $nodeContinueValue nil) -}}
+{{- $debugImage := $debugValues.image | default "ghcr.io/osac-project/osac-csi-driver:latest-debug" -}}
+{{- $debugImagePullPolicy := $debugValues.imagePullPolicy | default "IfNotPresent" -}}
+{{- $rolloutToken := $debugValues.rolloutToken | default "" -}}
+{{- if and $debugEnabled (not .Values.serviceAccount.node.create) -}}
+{{- fail "debug.enabled requires serviceAccount.node.create=true for a dedicated debug identity" -}}
+{{- end -}}
 {{- if and $trustEnabled (not $configured) -}}
 {{- fail "fulfillment configuration is required when global.fulfillmentTrust.enabled is true" -}}
 {{- end -}}
@@ -35,6 +45,10 @@ spec:
       app.kubernetes.io/component: node
   template:
     metadata:
+      {{- if $rolloutToken }}
+      annotations:
+        kubectl.kubernetes.io/restartedAt: {{ $rolloutToken | quote }}
+      {{- end }}
       labels:
         {{- include "csi-driver.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: node
@@ -42,8 +56,19 @@ spec:
       serviceAccountName: {{ include "csi-driver.nodeServiceAccountName" . }}
       containers:
         - name: osac-csi-driver
+          {{- if $debugEnabled }}
+          command:
+            - /usr/local/bin/debug-entrypoint
+          image: {{ $debugImage | quote }}
+          imagePullPolicy: {{ $debugImagePullPolicy }}
+          ports:
+            - name: debugger
+              containerPort: 2345
+              protocol: TCP
+          {{- else }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- end }}
           args:
             - "--csi-endpoint=unix:///csi/osac/csi.sock"
             - "--node-id=$(KUBE_NODE_NAME)"
@@ -82,6 +107,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            {{- if $debugEnabled }}
+            - name: OSAC_DEBUG_CONTINUE
+              value: {{ $nodeContinue | quote }}
+            - name: HOME
+              value: /tmp
+            - name: TMPDIR
+              value: /tmp
+            {{- end }}
             {{- if .Values.node.lvmsNodeSocket }}
             - name: OSAC_LVMS_NODE_SOCKET
               value: {{ .Values.node.lvmsNodeSocket | quote }}
@@ -126,6 +159,10 @@ spec:
               readOnly: true
             {{- end }}
             {{- end }}
+            {{- if $debugEnabled }}
+            - name: debug-tmp
+              mountPath: /tmp
+            {{- end }}
           resources:
             {{- toYaml .Values.node.resources | nindent 12 }}
           securityContext:
@@ -154,6 +191,10 @@ spec:
           hostPath:
             path: /var/lib/kubelet/plugins/{{ .Values.driverName }}
             type: DirectoryOrCreate
+        {{- if $debugEnabled }}
+        - name: debug-tmp
+          emptyDir: {}
+        {{- end }}
         - name: kubelet-dir
           hostPath:
             path: /var/lib/kubelet

@@ -40,7 +40,9 @@ def render(*overrides: str) -> list[dict]:
     return [doc for doc in yaml.safe_load_all(result.stdout) if isinstance(doc, dict)]
 
 
-def render_debug_scc(namespace: str = "debug-test") -> list[dict]:
+def render_debug_scc(
+    namespace: str = "debug-test", csi_driver_namespace: str = "osac-csi"
+) -> list[dict]:
     command = [
         os.environ.get("HELM_BIN", "helm"),
         "template",
@@ -50,6 +52,8 @@ def render_debug_scc(namespace: str = "debug-test") -> list[dict]:
         "kube-system",
         "--set-string",
         f"targetNamespace={namespace}",
+        "--set-string",
+        f"csiDriverNamespace={csi_driver_namespace}",
     ]
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode:
@@ -467,6 +471,7 @@ def test_debug_scc_is_scoped_to_the_selected_namespace() -> None:
     assert scc["users"] == [
         "system:serviceaccount:debug-test:osac-operator-debug",
         "system:serviceaccount:debug-test:fulfillment-debug",
+        "system:serviceaccount:osac-csi:csi-driver-controller-debug",
     ]
     assert scc["allowedCapabilities"] == ["SYS_PTRACE"]
     assert scc["requiredDropCapabilities"] == ["ALL"]

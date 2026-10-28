@@ -10,6 +10,10 @@ import tempfile
 from pathlib import Path
 
 from remote_debug_helm_args import ConfigurationError, build_helm_args
+from remote_debug_csi_helm_args import (
+    ConfigurationError as CSIDriverConfigurationError,
+)
+from remote_debug_csi_helm_args import build_helm_args as build_csi_helm_args
 from remote_debug_image_config import ConfigurationError as ImageConfigError
 from remote_debug_image_config import resolve_images
 
@@ -108,6 +112,25 @@ def test_build_normal_fulfillment_cross_platform_without_push() -> None:
     assert 'IMAGE_PLATFORM="linux/amd64"' in output
     assert "helm " not in output
     assert "kubectl " not in output
+
+
+def test_build_debug_csi_pushes_image_without_helm() -> None:
+    image = "registry.example.test/osac/osac-csi-driver:debug"
+    output = dry_run(
+        "build-csi-driver",
+        "DEBUG=true",
+        "PUSH=true",
+        f"CSI_DRIVER_SERVICE_IMAGE={image}",
+        "IMAGE_PLATFORM=linux/amd64",
+    )
+    assert "image-build-debug" in output
+    assert "--target runtime-debug" in output
+    assert "image-push-debug" in output
+    assert f'DEBUG_IMG="{image}"' in output
+    assert 'IMAGE_PLATFORM="linux/amd64"' in output
+    assert "helm " not in output
+    assert "kubectl " not in output
+    assert "oc " not in output
 
 
 def test_push_requires_an_explicit_image_reference() -> None:
@@ -253,6 +276,87 @@ def test_install_services_builds_only_selected_service() -> None:
     assert "--set-string operator.debug.rolloutToken=" not in output
 
 
+def test_install_services_delegates_csi_to_standalone_release_only() -> None:
+    image = "registry.example.test/osac/osac-csi-driver:debug"
+    output = dry_run(
+        "install-services",
+        "PLATFORM=kind",
+        "PROFILE=dev",
+        "NS=osac",
+        "BUILD=false",
+        "DEBUG=true",
+        "SERVICES=csi-driver",
+        f"CSI_DRIVER_SERVICE_IMAGE={image}",
+        "CSI_DRIVER_NODE_DEBUG_CONTINUE=false",
+    )
+    assert "helm status osac --namespace" not in output
+    assert "helm upgrade osac charts/osac" not in output
+    assert "install-csi-driver" in output
+    assert 'CSI_DRIVER_RELEASE="csi-driver"' in output
+    assert 'CSI_DRIVER_NAMESPACE="osac-csi"' in output
+    assert "CSI_DRIVER_NODE_DEBUG_CONTINUE=false" in output
+    assert f'CSI_DRIVER_SERVICE_IMAGE="{image}"' in output
+
+
+def test_install_csi_driver_builds_loads_and_upgrades_standalone_release() -> None:
+    output = dry_run(
+        "install-csi-driver",
+        "PLATFORM=kind",
+        "PROFILE=dev",
+        "NS=osac",
+        "DEBUG=true",
+        "PUSH=false",
+        "CSI_DRIVER_NODE_DEBUG_CONTINUE=false",
+        "IMAGE_PLATFORM=linux/amd64",
+        "IMAGE_CONFIG=/no-such-image-config.json",
+    )
+    image = "localhost/osac-csi-driver:latest-debug"
+    assert "image-build-debug" in output
+    assert "image-push-debug" not in output
+    assert f"kind-runtime.sh container save {image}" in output
+    assert "helm upgrade --install \"csi-driver\" ../osac-csi-driver/charts/csi-driver" in output
+    assert "--namespace \"osac-csi\"" in output
+    assert "--reuse-values" in output
+    assert "--set debug.enabled=true" in output
+    assert "--set debug.continue=true" in output
+    assert "--set debug.nodeContinue=false" in output
+    assert f"--set-string debug.image={image}" in output
+    assert "helm upgrade osac charts/osac" not in output
+    assert "OSAC_DEBUG_SCC" not in output
+
+
+def test_standalone_csi_build_requires_an_image_when_pushing() -> None:
+    result = make_command(
+        "install-csi-driver",
+        "PLATFORM=openshift",
+        "PROFILE=vmaas-ci",
+        "NS=osac",
+        "BUILD=true",
+        "PUSH=true",
+        "DEBUG=true",
+        "IMAGE_CONFIG=/no-such-image-config.json",
+        dry_run=False,
+    )
+    assert result.returncode != 0
+    assert "CSI_DRIVER_SERVICE_IMAGE is required" in result.stderr
+    assert "helm upgrade --install" not in result.stdout
+
+
+def test_install_csi_driver_defaults_to_installed_release_and_namespace() -> None:
+    output = dry_run(
+        "install-csi-driver",
+        "PLATFORM=openshift",
+        "PROFILE=vmaas-ci",
+        "NS=osac",
+        "BUILD=false",
+        "DEBUG=false",
+        "IMAGE_CONFIG=/no-such-image-config.json",
+    )
+    assert 'helm upgrade --install "csi-driver" ../osac-csi-driver/charts/csi-driver' in output
+    assert '--namespace "osac-csi"' in output
+    assert "--reuse-values" in output
+
+
 def test_install_services_build_false_skips_build_goals() -> None:
     output = dry_run(
         "install-services",
@@ -389,6 +493,39 @@ def test_image_config_selects_debug_or_normal_and_cli_wins() -> None:
 
     assert normal.osac_operator == "registry.example.test/operator:normal"
     assert debug_override.osac_operator == "quay.io/team/operator:cli"
+
+
+def test_csi_image_config_selects_debug_or_normal_and_cli_wins() -> None:
+    config = {
+        "version": 1,
+        "images": {
+            "normal": {"csi-driver": "registry.example.test/csi:normal"},
+            "debug": {"csi-driver": "registry.example.test/csi:debug"},
+        },
+    }
+    with tempfile.TemporaryDirectory() as directory:
+        config_path = Path(directory) / "images.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        normal = resolve_images(
+            config_path=str(config_path),
+            services_value="csi-driver",
+            debug_value="false",
+            build_value="false",
+            push_value="true",
+            platform="kind",
+        )
+        debug_override = resolve_images(
+            config_path=str(config_path),
+            services_value="csi-driver",
+            debug_value="true",
+            build_value="false",
+            push_value="true",
+            platform="openshift",
+            csi_driver_service_image="quay.io/team/csi:cli",
+        )
+
+    assert normal.csi_driver == "registry.example.test/csi:normal"
+    assert debug_override.csi_driver == "quay.io/team/csi:cli"
 
 
 def test_local_builds_are_rejected_for_openshift() -> None:
@@ -545,6 +682,70 @@ def test_helm_argument_builder_validates_debug_image_requirements() -> None:
         raise AssertionError("debug image omission was accepted")
 
 
+def test_csi_helm_argument_builder_maps_controller_and_node_continue() -> None:
+    args = build_csi_helm_args(
+        platform="openshift",
+        namespace="osac-csi",
+        debug_value="true",
+        debug_continue_value="true",
+        node_continue_value="false",
+        image="quay.io/team/csi:debug",
+        rollout_token="2026-10-28T12:34:56Z",
+    )
+    assert "debug.enabled=true" in args
+    assert "debug.continue=true" in args
+    assert "debug.nodeContinue=false" in args
+    assert "debug.image=quay.io/team/csi:debug" in args
+    assert "namespace=osac-csi" in args
+    assert "image.pullPolicy=Always" in args
+    assert "debug.fsGroup=auto" in args
+    assert "debug.rolloutToken=2026-10-28T12:34:56Z" in args
+
+    normal_args = build_csi_helm_args(
+        platform="kind",
+        namespace="osac-csi",
+        debug_value="false",
+        debug_continue_value="true",
+        node_continue_value="true",
+        image="quay.io:5000/team/csi:1.2.3",
+    )
+    assert "debug.enabled=false" in normal_args
+    assert "image.repository=quay.io:5000/team/csi" in normal_args
+    assert "image.tag=1.2.3" in normal_args
+    assert "image.pullPolicy=IfNotPresent" in normal_args
+    assert "debug.fsGroup=1001" in normal_args
+
+
+def test_csi_helm_argument_builder_requires_debug_image() -> None:
+    try:
+        build_csi_helm_args(
+            platform="kind",
+            namespace="osac-csi",
+            debug_value="true",
+            debug_continue_value="true",
+            node_continue_value="true",
+        )
+    except CSIDriverConfigurationError as error:
+        assert "CSI_DRIVER_SERVICE_IMAGE is required" in str(error)
+    else:
+        raise AssertionError("CSI debug image omission was accepted")
+
+
+def test_csi_helm_argument_builder_keeps_the_chart_namespace_fixed() -> None:
+    try:
+        build_csi_helm_args(
+            platform="kind",
+            namespace="custom-csi",
+            debug_value="false",
+            debug_continue_value="true",
+            node_continue_value="true",
+        )
+    except CSIDriverConfigurationError as error:
+        assert "must be osac-csi" in str(error)
+    else:
+        raise AssertionError("CSI chart accepted a non-hub namespace")
+
+
 def test_enable_debug_defaults_to_osac_and_accepts_namespace_override() -> None:
     output = dry_run("enable-debug")
     assert "/apis/security.openshift.io/v1" in output
@@ -554,11 +755,14 @@ def test_enable_debug_defaults_to_osac_and_accepts_namespace_override() -> None:
     )
     assert '--namespace "kube-system"' in output
     assert '--set-string targetNamespace="osac"' in output
+    assert '--set-string csiDriverNamespace="osac-csi"' in output
     assert "PLATFORM is required" not in output
     assert "PROFILE is required" not in output
 
     override = dry_run("enable-debug", "NS=osac-dev")
     assert '--set-string targetNamespace="osac-dev"' in override
+    csi_override = dry_run("enable-debug", "CSI_DRIVER_NAMESPACE=osac-csi-test")
+    assert '--set-string csiDriverNamespace="osac-csi-test"' in csi_override
 
 
 def test_disable_debug_checks_pods_before_uninstall() -> None:
@@ -580,17 +784,23 @@ def main() -> None:
     test_build_debug_fulfillment_pushes_shared_image_without_helm()
     test_build_normal_operator_cross_platform_without_push()
     test_build_normal_fulfillment_cross_platform_without_push()
+    test_build_debug_csi_pushes_image_without_helm()
     test_push_requires_an_explicit_image_reference()
     test_install_services_upgrades_once_with_both_debug_images()
     test_install_services_openshift_checks_scc_and_sets_cluster_hosts()
     test_install_services_can_apply_normal_cross_built_images()
     test_install_services_builds_only_selected_service()
+    test_install_services_delegates_csi_to_standalone_release_only()
+    test_install_csi_driver_builds_loads_and_upgrades_standalone_release()
+    test_standalone_csi_build_requires_an_image_when_pushing()
+    test_install_csi_driver_defaults_to_installed_release_and_namespace()
     test_install_services_build_false_skips_build_goals()
     test_continue_shorthand_sets_both_runtime_modes()
     test_continue_defaults_to_true_for_both_services()
     test_component_continue_override_does_not_change_other_service()
     test_install_services_resolves_config_and_cli_image_overrides()
     test_image_config_selects_debug_or_normal_and_cli_wins()
+    test_csi_image_config_selects_debug_or_normal_and_cli_wins()
     test_local_builds_are_rejected_for_openshift()
     test_kind_local_build_uses_and_loads_default_tags()
     test_install_services_requires_images_for_default_push_builds()
@@ -598,6 +808,9 @@ def main() -> None:
     test_install_services_rejects_unknown_services_before_cluster_calls()
     test_helm_argument_builder_maps_services_and_image_references()
     test_helm_argument_builder_validates_debug_image_requirements()
+    test_csi_helm_argument_builder_maps_controller_and_node_continue()
+    test_csi_helm_argument_builder_requires_debug_image()
+    test_csi_helm_argument_builder_keeps_the_chart_namespace_fixed()
     test_enable_debug_defaults_to_osac_and_accepts_namespace_override()
     test_disable_debug_checks_pods_before_uninstall()
     print("remote-debug Make contracts passed")

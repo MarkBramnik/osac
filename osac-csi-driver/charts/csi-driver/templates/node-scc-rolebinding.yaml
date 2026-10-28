@@ -1,0 +1,38 @@
+{{- if .Capabilities.APIVersions.Has "security.openshift.io/v1" }}
+# Grant the namespace's active node ServiceAccount explicit SCC `use` access.
+# The rule is limited to this chart's node SCC and is updated with the
+# ServiceAccount when debug mode switches between normal and debug identities.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "csi-driver.fullname" . }}-node-scc-use
+  labels:
+    {{- include "csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - {{ include "csi-driver.fullname" . }}-node
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "csi-driver.fullname" . }}-node-scc-use
+  namespace: {{ include "csi-driver.namespace" . }}
+  labels:
+    {{- include "csi-driver.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "csi-driver.fullname" . }}-node-scc-use
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "csi-driver.nodeServiceAccountName" . }}
+    namespace: {{ include "csi-driver.namespace" . }}
+{{- end }}

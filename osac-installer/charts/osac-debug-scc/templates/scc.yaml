@@ -10,9 +10,10 @@ metadata:
   annotations:
     kubernetes.io/description: >-
       Temporary OSAC remote-debug policy. Only the operator and Fulfillment
-      debug service accounts in {{ .Values.targetNamespace }} may request
-      SYS_PTRACE and unconfined seccomp; privileged containers, host access,
-      and privilege escalation remain disabled.
+      debug service accounts in {{ .Values.targetNamespace }} and the CSI
+      controller debug service account in {{ .Values.csiDriverNamespace }} may
+      request SYS_PTRACE and unconfined seccomp; privileged containers, host
+      access, and privilege escalation remain disabled.
 priority: 0
 allowPrivilegedContainer: false
 allowPrivilegeEscalation: false
@@ -47,4 +48,5 @@ volumes:
 users:
 - system:serviceaccount:{{ .Values.targetNamespace }}:osac-operator-debug
 - system:serviceaccount:{{ .Values.targetNamespace }}:fulfillment-debug
+- system:serviceaccount:{{ .Values.csiDriverNamespace }}:csi-driver-controller-debug
 groups: []

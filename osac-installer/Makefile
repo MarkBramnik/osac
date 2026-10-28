@@ -705,7 +705,7 @@ bmf-netbox-render-test: helm-deps ## Check NetBox, Metal3 management, and Secret
 	uv run --project .. python scripts/test-bmf-netbox-render.py
 
 .PHONY: helm-validate
-helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test mce-render-test dev-full-render-test openbao-security-context-test bmf-netbox-render-test remote-debug-render-test## Validate all charts (lint + template)
+helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test mce-render-test dev-full-render-test openbao-security-context-test bmf-netbox-render-test remote-debug-render-test ## Validate all charts (lint + template)
 	@# bmaas-netbox-ci layers bmaas-ci as its base (see the profile-selection
 	@# block); validate the same combination the installer deploys.
 	@for d in values/*/; do \

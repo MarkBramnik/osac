@@ -76,7 +76,9 @@ separate network namespaces, so they can use the same Pod-side port. No
 process waits for an IDE attach;
 the Fulfillment target uses this as its default. All four processes are debugged
 at once, so APIs, controller reconciliation, and event publishing may pause.
-Use a development environment.
+The CSI chart uses the same Delve entrypoint for its controller and node driver;
+pausing the node DaemonSet can interrupt storage operations on every node. Use a
+development environment.
 
 | Deployment | Container | Delve port | Suggested workstation port |
 |---|---|---:|---:|
@@ -95,22 +97,25 @@ image reference is preserved and selected again when debug is disabled.
 The operator and Fulfillment developer-only `debug` objects are accepted by
 narrowly matched `patternProperties` rules, not ordinary `properties` entries,
 so they do not add Wizard controls. The component image-build targets do not
-use Helm. The single `install-services` target uses selected profile values,
-optional values files, and `EXTRA_HELM_ARGS`, then upgrades the existing
-umbrella release once with the requested debug settings. It retains normal Helm
-schema validation and suppresses hooks so unrelated AAP bootstrap and
+use Helm. `install-services` uses selected profile values, optional values files,
+and `EXTRA_HELM_ARGS` for the umbrella release; it delegates CSI to the separate
+`install-csi-driver` release. The umbrella upgrade retains normal Helm schema
+validation and suppresses hooks so unrelated AAP bootstrap and
 template-publishing jobs aren't rerun. The full `install-osac` workflow retains
 its normal hook behavior.
 
 The separate SCC chart creates the cluster-scoped SCC `osac-remote-debug` and
 is installed as Helm release `osac-debug-scc` in the fixed release-storage
-namespace `kube-system`. `enable-debug` scopes its grant to the `debug`
-ServiceAccount in the target OSAC namespace, defaulting to `osac`; pass
-`NS=<namespace>` to select another namespace.
+namespace `kube-system`. `enable-debug` scopes its grant to operator and
+Fulfillment debug ServiceAccounts in the target OSAC namespace (default
+`osac`) and the CSI controller debug ServiceAccount in `CSI_DRIVER_NAMESPACE`
+(default `osac-csi`). The CSI node debug identity uses the CSI chart's own node
+SCC.
 
 For `debug-me`, configuration is in `debug-config.yaml`, not the installer
 schema. Each `targets` item identifies a workload and container. The config can
-contain the operator and all four Fulfillment targets:
+contain the operator, all four Fulfillment targets, and CSI controller/node
+targets:
 
 ```yaml
 targets:
@@ -158,6 +163,22 @@ targets:
     substitutePath:
       - from: "${workspaceFolder}/fulfillment-service"
         to: "/opt/app-root/src/fulfillment-service"
+  - namespace: osac-csi
+    workload: {kind: Deployment, name: csi-driver-controller}
+    container: osac-csi-driver
+    debugPort: 2345
+    localPort: 2350
+    substitutePath:
+      - from: "${workspaceFolder}/osac-csi-driver"
+        to: "/opt/app-root/src/osac-csi-driver"
+  - namespace: osac-csi
+    workload: {kind: DaemonSet, name: csi-driver-node}
+    container: osac-csi-driver
+    debugPort: 2345
+    localPort: 2351
+    substitutePath:
+      - from: "${workspaceFolder}/osac-csi-driver"
+        to: "/opt/app-root/src/osac-csi-driver"
 ```
 
 `workload.name` is the Deployment name; the argument to `debug.sh start` is a
@@ -188,8 +209,10 @@ The targets are defined in
 |---|---|
 | `build-osac-operator` | Build a normal or Delve-enabled operator image; push by default. No Helm or cluster access. |
 | `build-fulfillment-service` | Build a normal or shared Delve-enabled Fulfillment image; push by default. No Helm or cluster access. |
-| `install-services` | Apply selected component images/debug settings in one upgrade of the existing `osac` Helm release. |
-| `enable-debug [NS=<namespace>]` | Install the OpenShift remote-debug SCC for `osac-operator-debug` and `fulfillment-debug` in that namespace (default: `osac`). |
+| `build-csi-driver` | Build a normal or Delve-enabled CSI driver image; push by default. No Helm or cluster access. |
+| `install-services` | Apply selected operator/Fulfillment settings in the `osac` release and delegate selected `csi-driver` to its independent Helm release. |
+| `install-csi-driver` | Independently build/load and install or upgrade the CSI chart release (defaults: release `csi-driver`, namespace `osac-csi`). Does not require an existing `osac` release. |
+| `enable-debug [NS=<namespace>]` | Install the OpenShift remote-debug SCC for operator/Fulfillment accounts in `NS` (default: `osac`) and the CSI controller debug account in `CSI_DRIVER_NAMESPACE` (default: `osac-csi`). |
 | `disable-debug` | Remove that SCC release after checking for active Pods using it. |
 | `remote-debug-scc-integration-test` | Manually verify SCC admission and the removal guard on an explicitly approved OpenShift cluster. |
 | `remote-debug-make-test` | Check image and install Make workflows without a cluster. |
@@ -208,18 +231,20 @@ Delve-enabled image when `DEBUG=true`. They do not install anything.
 | `CONTAINER_TOOL` | `docker` or `podman`; defaults to the installer-selected tool. |
 | `OSAC_OPERATOR_IMAGE` | Operator image reference. Overrides the matching entry in the home config; required for a selected build when `PUSH=true`. |
 | `FULFILLMENT_SERVICE_IMAGE` | Fulfillment image reference. Overrides the matching entry in the home config; required for a selected build when `PUSH=true`. |
+| `CSI_DRIVER_SERVICE_IMAGE` | CSI driver image reference. Overrides its normal/debug image-config entry; required for a selected build when `PUSH=true`. |
 
 With `PUSH=false`, the build goals use local tags by default:
-`localhost/osac-operator:latest[-debug]` and
-`localhost/fulfillment-service:latest[-debug]`. Kind can load these during
-`install-services`. An OpenShift cluster must be able to pull the image, so use
-and push a registry reference there.
+`localhost/osac-operator:latest[-debug]`,
+`localhost/fulfillment-service:latest[-debug]`, and
+`localhost/osac-csi-driver:latest[-debug]`. Kind can load these during
+`install-services` or `install-csi-driver`. An OpenShift cluster must be able to
+pull the image, so use and push a registry reference there.
 
 `install-services` builds selected images by default (`BUILD=true`). It resolves
 each image reference from the command line first, then from
 `~/.config/osac/image-mappings.json`. The optional JSON file keeps separate
-normal and debug references, so switching `DEBUG` selects the corresponding
-image set:
+normal and debug references for the operator, Fulfillment, and CSI driver, so
+switching `DEBUG` selects the corresponding image set:
 
 ```json
 {
@@ -227,11 +252,13 @@ image set:
   "images": {
     "normal": {
       "osac-operator": "quay.io/<your-org>/osac-operator:dev",
-      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev"
+      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev",
+      "csi-driver": "quay.io/<your-org>/osac-csi-driver:dev"
     },
     "debug": {
       "osac-operator": "quay.io/<your-org>/osac-operator:dev-debug",
-      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev-debug"
+      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev-debug",
+      "csi-driver": "quay.io/<your-org>/osac-csi-driver:dev-debug"
     }
   }
 }
@@ -240,8 +267,8 @@ image set:
 Use `IMAGE_CONFIG=/path/to/file.json` to select a different config file. A
 command-line image variable overrides only that component's value; the other
 component can still use its config entry. With `BUILD=false`, no image is built
-or pushed. `DEBUG_CONTINUE` and `FULFILLMENT_DEBUG_CONTINUE` affect runtime
-startup behavior, not the image build.
+or pushed. The component-specific continue variables affect runtime startup,
+not the image build.
 
 Example: build and push both debug images for an x86 OpenShift cluster. Log in
 with the same container tool before building:
@@ -256,6 +283,9 @@ make -C osac-installer build-osac-operator \
 make -C osac-installer build-fulfillment-service \
   DEBUG=true IMAGE_PLATFORM=linux/amd64 \
   FULFILLMENT_SERVICE_IMAGE=quay.io/<your-org>/fulfillment-service:dev-debug
+make -C osac-installer build-csi-driver \
+  DEBUG=true IMAGE_PLATFORM=linux/amd64 \
+  CSI_DRIVER_SERVICE_IMAGE=quay.io/<your-org>/osac-csi-driver:dev-debug
 ```
 
 Normal images can also be built independently, including for a non-native
@@ -266,16 +296,17 @@ make -C osac-installer build-osac-operator \
   DEBUG=false PUSH=false IMAGE_PLATFORM=linux/amd64
 ```
 
-### Install selected services in one Helm upgrade
+### Install selected services
 
-`install-services` is the only focused target that upgrades the `osac` service
-release; `enable-debug` and `disable-debug` manage the separate SCC release. It
-performs one upgrade of the existing umbrella release, with normal schema
-validation and `--no-hooks`. `SERVICES` is a comma-separated set of components
-whose image/mode you want to apply. With `DEBUG=true`, each listed
-component uses its debug image; components not listed return to profile defaults.
-With `DEBUG=false`, debug mode is disabled and listed normal image
-references override the profile when supplied. The list should describe the full
+`install-services` updates the existing umbrella release for selected
+`osac-operator`/`fulfillment-service` components and calls the independent
+`install-csi-driver` target for `csi-driver`. The CSI target upgrades the
+`csi-driver` Helm release in `osac-csi` by default; it does not add CSI to the
+umbrella chart. If CSI is the only selected service, `install-services` skips
+the umbrella upgrade. The two releases upgrade independently, so a failure can
+leave one updated and the other unchanged. `SERVICES` is a comma-separated set
+of `osac-operator`, `fulfillment-service`, and `csi-driver`. With `DEBUG=true`,
+each selected service uses its debug image; the list should describe the full
 debug set you intend to leave enabled.
 
 Use the same profile and custom values as the existing release. Because Helm
@@ -287,55 +318,74 @@ it to each selected service's `kubectl.kubernetes.io/restartedAt` pod-template
 annotation. This forces a rollout even if an image was rebuilt and pushed under
 the same tag, and it also applies with `BUILD=false`. Selecting
 `fulfillment-service` updates the annotation on all four Fulfillment Deployments;
-selecting `osac-operator` updates the manager Deployment. The Fulfillment event
+selecting `osac-operator` updates the manager Deployment; selecting `csi-driver`
+updates the CSI controller Deployment and node DaemonSet. The Fulfillment event
 publisher uses a `Recreate` strategy, so it stops before its replacement starts.
-Rollouts terminate existing debugger sessions; in debug mode, `CONTINUE=false`
-leaves the replacement processes waiting for IDE attach again.
+Rollouts terminate existing debugger sessions; in debug mode, false continue
+settings leave the corresponding replacement processes waiting for IDE attach.
 
 | Variable | Meaning |
 |---|---|
 | `PLATFORM`, `PROFILE`, `NS` | Required deployment platform, existing installer profile, and namespace containing the `osac` release. |
-| `SERVICES` | Comma-separated component set: `osac-operator`, `fulfillment-service`, or both. When debugging, treat this as the complete set to leave in debug mode. |
+| `SERVICES` | Comma-separated component set: `osac-operator`, `fulfillment-service`, `csi-driver`, or any combination. When debugging, treat this as the complete set to leave in debug mode. |
 | `DEBUG` | `true` enables debug for every listed service; `false` disables debug and selects normal images. Defaults to `false`. |
 | `OSAC_OPERATOR_IMAGE` | Tagged operator image reference. Required for the operator when debugging on OpenShift; optional normal-image override otherwise. |
 | `FULFILLMENT_SERVICE_IMAGE` | Tagged shared Fulfillment image reference. Required for Fulfillment when debugging on OpenShift; optional normal-image override otherwise. |
+| `CSI_DRIVER_SERVICE_IMAGE` | Tagged CSI image reference. Required for CSI when debugging on OpenShift; optional normal-image override otherwise. |
+| `CSI_DRIVER_RELEASE`, `CSI_DRIVER_NAMESPACE` | Separate CSI Helm release and namespace; default to `csi-driver` and the chart's fixed `osac-csi` namespace. |
 | `OPERATOR_VALUES_FILE`, `FULFILLMENT_VALUES_FILE` | Optional umbrella-chart values overlays applied after the selected profile. |
+| `CSI_DRIVER_VALUES_FILE` | Optional CSI chart values overlay for its separate release. Existing release values are reused on upgrade, then this file is applied. |
 | `EXTRA_HELM_ARGS` | Additional umbrella-chart Helm overrides, applied before debug settings. |
 | `BUILD` | Automatically build the listed services before the upgrade. Defaults to `true`; use `false` when the images are already built. |
 | `PUSH` | When `BUILD=true`, push built images. Defaults to `true`; `PUSH=false` is for local Kind images and is rejected for OpenShift builds. |
 | `IMAGE_PLATFORM` | Forwarded to each selected build target, e.g. `linux/amd64` or `linux/arm64`. |
 | `CONTAINER_TOOL` | Container tool forwarded to the selected build targets. |
+| `CSI_DRIVER_VERSION`, `CSI_DRIVER_GIT_COMMIT` | Optional CSI binary version/commit metadata used by its image build. |
 | `IMAGE_CONFIG` | Optional alternate JSON config path. Defaults to `~/.config/osac/image-mappings.json`. |
-| `CONTINUE` | Sets both runtime continue flags. Defaults to `true`, so all selected processes start without waiting for IDE attach. |
+| `KUBECONFIG`, `KIND_CLUSTER_NAME` | Select the target cluster; set `KUBECONFIG` explicitly for OpenShift. |
+| `CONTINUE` | Sets the component continue settings. Defaults to `true`, so selected processes start without waiting for IDE attach. |
 | `DEBUG_CONTINUE` | Operator behavior: `true` continues at startup; `false` waits for IDE attach. Defaults to `CONTINUE` (`true`). |
 | `FULFILLMENT_DEBUG_CONTINUE` | Fulfillment behavior: `true` continues at startup; `false` waits for IDE attach. Defaults to `CONTINUE` (`true`). |
+| `CSI_DRIVER_DEBUG_CONTINUE` | CSI controller behavior; defaults to `CONTINUE`. |
+| `CSI_DRIVER_NODE_DEBUG_CONTINUE` | CSI node DaemonSet behavior; defaults to `CSI_DRIVER_DEBUG_CONTINUE`. `false` pauses the driver on every node and can disrupt all CSI operations; the target prints a warning. |
 
 The build targets remain available for standalone builds. When invoked through
 `install-services`, `BUILD`, `PUSH`, `IMAGE_PLATFORM`, and `CONTAINER_TOOL` are
-forwarded to the selected build targets; `CONTINUE` and its component-specific
-forms configure runtime behavior in Helm. Explicit `OSAC_OPERATOR_IMAGE` and
-`FULFILLMENT_SERVICE_IMAGE` values override the matching mode entry in the JSON
-config, and the resolved references are used for both the build and upgrade.
+forwarded to selected build targets; continue variables configure runtime
+behavior. Explicit image variables override matching mode entries in the JSON
+config, and resolved references are used for both build and deployment.
 
-For OpenShift, install the SCC first. Then build, push, and apply both debug
-images in one invocation. The image references can come from the JSON config;
-explicit variables override them:
+Run the CSI target by itself to install or update its separate release. It uses
+the same installer `PLATFORM`, `PROFILE`, and `NS` parameters; `PROFILE` selects
+the Kind context, while `CSI_DRIVER_NAMESPACE` selects the chart namespace.
+
+```bash
+make -C osac-installer install-csi-driver \
+  PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
+  DEBUG=true IMAGE_PLATFORM=linux/amd64 \
+  CSI_DRIVER_SERVICE_IMAGE=quay.io/<your-org>/osac-csi-driver:dev-debug \
+  CSI_DRIVER_VALUES_FILE=values/my-csi-driver.yaml
+```
+
+For OpenShift, install the SCC first. Then build, push, and apply selected debug
+images. The image references can come from the JSON config; explicit variables
+override them:
 
 ```bash
 make -C osac-installer install-services \
   PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
-  DEBUG=true SERVICES=osac-operator,fulfillment-service \
+  DEBUG=true SERVICES=osac-operator,fulfillment-service,csi-driver \
   IMAGE_PLATFORM=linux/amd64
 ```
 
-For Kind, the same target loads the local images into the cluster before the
-single Helm upgrade. No registry references are required for this local build:
+For Kind, the target loads local images before upgrading the relevant release.
+No registry references are required for this local build:
 
 ```bash
 make -C osac-installer install-services \
   PLATFORM=kind PROFILE=dev NS=osac \
   BUILD=true PUSH=false DEBUG=true \
-  SERVICES=osac-operator,fulfillment-service \
+  SERVICES=osac-operator,fulfillment-service,csi-driver \
   IMAGE_PLATFORM=linux/amd64
 ```
 
@@ -347,15 +397,15 @@ normal images without rebuilding them:
 ```bash
 make -C osac-installer install-services \
   PLATFORM=openshift PROFILE=vmaas-ci NS=osac \
-  BUILD=false DEBUG=false SERVICES=osac-operator,fulfillment-service
+  BUILD=false DEBUG=false SERVICES=osac-operator,fulfillment-service,csi-driver
 ```
 
-`CONTINUE` defaults to `true`, so the operator and all four Fulfillment
-processes start immediately. Set `CONTINUE=false` to pause all selected debug
-processes, or use `DEBUG_CONTINUE` and `FULFILLMENT_DEBUG_CONTINUE` to override
-them independently. `BUILD`, `PUSH`, and `IMAGE_PLATFORM` are also accepted by
-`install-services` and are forwarded to the selected build targets. Remove the
-SCC only after no debug Pods use it.
+`CONTINUE` defaults to `true`, so selected processes start immediately. For CSI,
+`CSI_DRIVER_DEBUG_CONTINUE` controls the controller and
+`CSI_DRIVER_NODE_DEBUG_CONTINUE` controls every node DaemonSet instance. Pausing
+the node instances can stop CSI operations across the cluster. `BUILD`, `PUSH`,
+and `IMAGE_PLATFORM` are also accepted by `install-services`. Remove the SCC
+only after no debug Pods use it.
 
 ### OpenShift SCC lifecycle
 
@@ -368,11 +418,14 @@ the SCC itself is cluster-scoped. These targets require the permissions needed
 to create and delete cluster-scoped SCC resources.
 
 The SCC grants `SYS_PTRACE` and unconfined seccomp only to
-`system:serviceaccount:<NS>:osac-operator-debug` and
-`system:serviceaccount:<NS>:fulfillment-debug`; it has no service-account
-group grant. The charts create each identity when its component is debugged,
-so Kind needs no SCC setup. The operator debug account receives operator RBAC;
-the separate Fulfillment account has no operator role binding. The SCC still
+`system:serviceaccount:<NS>:osac-operator-debug`,
+`system:serviceaccount:<NS>:fulfillment-debug`, and
+`system:serviceaccount:<CSI_DRIVER_NAMESPACE>:csi-driver-controller-debug`; it
+has no service-account group grant. The charts create each identity when its
+component is debugged, so Kind needs no SCC setup. The operator debug account
+receives operator RBAC; Fulfillment and CSI controller debug accounts do not
+share it. The CSI node debug identity uses the CSI chart's node SCC, which
+retains the privileges the node plugin already needs. The shared debug SCC still
 denies privileged containers, host access, and privilege escalation, and
 requires a read-only root filesystem. Its priority is `0` (OpenShift rejects
 negative SCC priorities).
@@ -380,7 +433,7 @@ negative SCC priorities).
 To verify real OpenShift admission and the `disable-debug` guard, run the
 installer's manual integration test only on an approved disposable or
 admin-coordinated cluster. It creates a temporary namespace and cluster-scoped
-SCC, proves both named debug-account Pods are admitted with that SCC, verifies
+SCC, proves all three named debug-account Pods are admitted with that SCC, verifies
 removal is blocked while either Pod is running, then removes the Pods and SCC:
 
 ```bash
@@ -391,6 +444,21 @@ make -C osac-installer remote-debug-scc-integration-test
 
 The test refuses to run if the managed or legacy SCC, its Helm release, or its
 temporary namespace already exists. It is manual and is not part of Kind CI.
+
+The CSI attach smoke test is also manual and destructive to its temporary CSI
+namespace. It requires an approved disposable Kind cluster and refuses to run
+if the namespace, release, or cluster-scoped `CSIDriver` already exists:
+
+```bash
+OSAC_CSI_DEBUG_IT_APPROVED=true \
+KUBECONFIG="$HOME/.kube/osac-dev-kind.kubeconfig" \
+KIND_CLUSTER_NAME=osac-dev \
+make -C osac-csi-driver remote-debug-integration-test
+```
+
+It builds and loads the debug image, pauses the CSI controller and node driver,
+tests two consecutive Delve attaches to the controller and every node Pod, then
+uninstalls its release and deletes `osac-csi`.
 
 To finish debugging, restore normal mode for every component being debugged,
 then remove the SCC:
@@ -472,7 +540,7 @@ kubectl rollout restart deployment/osac-operator -n osac
 | Manager liveness and readiness probes are omitted. | Delve can be running while its manager is paused for an IDE attach; normal manager probes would fail or cause unwanted restarts. Helm waits for the Delve container, not for the manager to resume. |
 | The debug container requests `SYS_PTRACE`, uses unconfined seccomp, and mounts a writable `/tmp` `emptyDir`; the root filesystem remains read-only and all other capabilities are dropped. | Delve needs to trace the Go process and has temporary runtime files. OpenShift admits this only with the debug SCC. |
 | Debug mode uses separate `osac-operator-debug` and `fulfillment-debug` ServiceAccounts with token automount enabled, plus optional debug resource values and platform-specific `fsGroup` and image-pull policy. | Each component keeps its own identity on Kind and OpenShift; only the operator account receives operator RBAC. |
-| OpenShift debugging uses the separate Helm-managed `osac-remote-debug` SCC release, scoped to the two named debug accounts in `<NS>`. | The Pod requests `SYS_PTRACE` and unconfined seccomp; the SCC allows these while continuing to deny privileged containers and host access. No service-account group is granted access. |
+| OpenShift debugging uses the separate Helm-managed `osac-remote-debug` SCC release, scoped to operator/Fulfillment debug accounts in `<NS>` and the CSI controller debug account in `<CSI_DRIVER_NAMESPACE>`. | The Pod requests `SYS_PTRACE` and unconfined seccomp; the SCC allows these while continuing to deny privileged containers and host access. The CSI node account remains under its own node SCC. No service-account group is granted access. |
 | Only the manager changes; the console-proxy Deployment remains on the normal image with its regular probes. | The supported debugging scope is the operator manager, not the console proxy. |
 
 The operator's regular behavior is restored by setting `DEBUG=false` in
@@ -489,7 +557,7 @@ OpenShift, remove the temporary SCC afterward with
 | Delve listens on IPv4 loopback `127.0.0.1:2345`; only a `containerPort` is declared. No `hostPort`, Service, or Route is added. | `debug-me` uses port-forward by default or authenticated exec streaming when the target opts into it; the API remains unauthenticated and loopback-only. |
 | Probes are omitted in debug mode. The controller, gRPC server, and REST gateway retain `RollingUpdate` but use `maxSurge: 0` and `maxUnavailable: 100%`; the event publisher remains `Recreate`. | Debug rollouts stop old Pods before creating replacements, preventing overlapping Delve sessions without changing the strategy type on existing Deployments. |
 | Debug containers request `SYS_PTRACE`, use unconfined seccomp, mount writable `/tmp`, and set `HOME`/`TMPDIR` there. Existing read-only root filesystems and dropped capabilities are retained where configured. | Delve needs tracing permissions and temporary writable storage; OpenShift admits these settings only with the temporary debug SCC. |
-| `CONTINUE=true` is the default for the operator and all four Fulfillment processes; set `CONTINUE=false` or the component-specific flag to pause for IDE attach. | Paused processes wait for IDE attach, but the service APIs, controller, and event publisher are unavailable until resumed. |
+| `CONTINUE=true` is the default for operator, Fulfillment, and CSI processes; CSI has independent controller and node continue overrides. | Paused processes wait for IDE attach; pausing CSI node processes can disrupt storage operations across all nodes. |
 
 Run the four `debug-me` entries independently. Each uses Pod-side port `2345`;
 the provided config assigns local ports `2346`–`2349` so all tunnels can be open

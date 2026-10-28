@@ -7,7 +7,7 @@ import argparse
 import shlex
 import sys
 
-SUPPORTED_SERVICES = {"osac-operator", "fulfillment-service"}
+SUPPORTED_SERVICES = {"osac-operator", "fulfillment-service", "csi-driver"}
 
 
 class ConfigurationError(ValueError):

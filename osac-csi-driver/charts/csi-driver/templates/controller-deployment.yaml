@@ -7,6 +7,18 @@
 {{- $trustNamespace := .Values.global.fulfillmentTrust.tenantNamespace | default "" -}}
 {{- $caBundleConfigMap := $fulfillment.tls.caBundle.configMap | default "" -}}
 {{- $caBundleKey := $fulfillment.tls.caBundle.key | default "" -}}
+{{- $debugValues := .Values.debug | default dict -}}
+{{- $debugEnabled := $debugValues.enabled | default false -}}
+{{- $debugContinueValue := index $debugValues "continue" -}}
+{{- $debugContinue := ternary true $debugContinueValue (eq $debugContinueValue nil) -}}
+{{- $debugImage := $debugValues.image | default "ghcr.io/osac-project/osac-csi-driver:latest-debug" -}}
+{{- $debugImagePullPolicy := $debugValues.imagePullPolicy | default "IfNotPresent" -}}
+{{- $debugFSGroupValue := index $debugValues "fsGroup" -}}
+{{- $debugFSGroup := ternary "auto" $debugFSGroupValue (eq $debugFSGroupValue nil) -}}
+{{- $rolloutToken := $debugValues.rolloutToken | default "" -}}
+{{- if and $debugEnabled (not .Values.serviceAccount.controller.create) -}}
+{{- fail "debug.enabled requires serviceAccount.controller.create=true for a dedicated debug identity" -}}
+{{- end -}}
 {{- if and $configMapName (or $endpoint $issuerURL) -}}
 {{- fail "controller.fulfillment.configMap cannot be combined with direct endpoint or issuerUrl values" -}}
 {{- end -}}
@@ -54,15 +66,39 @@ spec:
       app.kubernetes.io/component: controller
   template:
     metadata:
+      {{- if $rolloutToken }}
+      annotations:
+        kubectl.kubernetes.io/restartedAt: {{ $rolloutToken | quote }}
+      {{- end }}
       labels:
         {{- include "csi-driver.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: controller
     spec:
       serviceAccountName: {{ include "csi-driver.controllerServiceAccountName" . }}
+      {{- if $debugEnabled }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: Unconfined
+        {{- if ne (toString $debugFSGroup) "auto" }}
+        fsGroup: {{ $debugFSGroup }}
+        {{- end }}
+      {{- end }}
       containers:
         - name: osac-csi-driver
+          {{- if $debugEnabled }}
+          command:
+            - /usr/local/bin/debug-entrypoint
+          image: {{ $debugImage | quote }}
+          imagePullPolicy: {{ $debugImagePullPolicy }}
+          ports:
+            - name: debugger
+              containerPort: 2345
+              protocol: TCP
+          {{- else }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- end }}
           args:
             - "--csi-endpoint=unix:///csi/osac/csi.sock"
             - "--node-id=controller"
@@ -96,8 +132,17 @@ spec:
             - "--vendor-controllers={{ .Values.controller.vendorControllers }}"
             {{- end }}
             - "--v=2"
-          {{- if $configured }}
+          {{- if or $configured $debugEnabled }}
           env:
+            {{- if $debugEnabled }}
+            - name: OSAC_DEBUG_CONTINUE
+              value: {{ $debugContinue | quote }}
+            - name: HOME
+              value: /tmp
+            - name: TMPDIR
+              value: /tmp
+            {{- end }}
+            {{- if $configured }}
             {{- if $configMapName }}
             - name: OSAC_FULFILLMENT_ENDPOINT
               valueFrom:
@@ -117,6 +162,7 @@ spec:
                 secretKeyRef:
                   name: {{ $secretName }}
                   key: {{ $fulfillment.credentials.clientIdKey }}
+            {{- end }}
           {{- end }}
           volumeMounts:
             - name: osac-socket-dir
@@ -131,13 +177,26 @@ spec:
               mountPath: /etc/osac-csi/fulfillment-ca
               readOnly: true
             {{- end }}
+            {{- if $debugEnabled }}
+            - name: debug-tmp
+              mountPath: /tmp
+            {{- end }}
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
+          {{- if $debugEnabled }}
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+              add: ["SYS_PTRACE"]
+          {{- else }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          {{- end }}
 
         - name: csi-provisioner
           image: "{{ .Values.sidecars.provisioner.image.repository }}:{{ .Values.sidecars.provisioner.image.tag }}"
@@ -174,6 +233,10 @@ spec:
       volumes:
         - name: osac-socket-dir
           emptyDir: {}
+        {{- if $debugEnabled }}
+        - name: debug-tmp
+          emptyDir: {}
+        {{- end }}
         {{- if $configured }}
         - name: fulfillment-credentials
           secret:
