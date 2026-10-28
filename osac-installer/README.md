@@ -460,6 +460,17 @@ make uninstall PLATFORM=kind PROFILE=dev-full NS=osac
 
 #### Remote debugging OSAC components
 
+These targets provide a unified, opt-in workflow for building and deploying
+normal or Delve-enabled images, selecting a cross-build platform, and managing
+image references through configuration or command-line overrides. The currently
+integrated components are `osac-operator`, `fulfillment-service`, and
+`csi-driver`; other components may be integrated later if the project decides to
+adopt this workflow. It is not a general build workflow for every OSAC component.
+
+Remote debugging helps developers trace execution flow, find bugs, and learn how
+the services and controllers behave. **This feature is for development and
+troubleshooting only; it is not intended for production.**
+
 Build and push the normal or Delve-enabled images independently of Helm. The
 component-specific image variables are required when `PUSH=true` (the default).
 Set `PUSH=false` for a local image; `IMAGE_PLATFORM` can select a cross-build

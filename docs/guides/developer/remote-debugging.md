@@ -1,20 +1,29 @@
 # Remote debugging OSAC components
 
-This guide describes focused remote-debug workflows for the OSAC Operator and
-Fulfillment service. It covers Delve-enabled images, the OpenShift SCC lifecycle,
-installer Make targets, the `debug-me` helper, and debug-mode deployment changes.
+This guide describes the unified development workflow for building and
+debugging the OSAC Operator, Fulfillment service, and CSI driver. It covers
+normal and Delve-enabled images, cross-platform builds, image reference
+management, the OpenShift SCC lifecycle, installer Make targets, the `debug-me`
+helper, and debug-mode deployment changes. Other components may be integrated
+later if the project chooses to adopt this workflow.
+
+> **Development only:** Remote debugging is for development and troubleshooting,
+> not production. Do not deploy Delve-enabled images or debugging settings in
+> production.
 
 For a concise user-facing summary, see the
 [remote-debugging feature overview](../../features/remote-debugging.md).
 
 ## 1. Goal
 
-Remote debugging lets an IDE attach to the OSAC Operator manager or to a
-Fulfillment service process running in a Kubernetes or OpenShift Pod. Each
-workflow builds a separate debug image, updates the relevant Deployments in the
-existing `osac` Helm release, and forwards Delve's port to the developer's
-workstation. It does not install duplicate Deployments or create a Service or
-Route for Delve.
+The shared installer workflow lets developers select normal or Delve-enabled
+images, target a build platform, and resolve or override image references
+consistently for its supported components. Debugging then lets an IDE attach to
+the OSAC Operator manager, a Fulfillment process, or the CSI controller/node
+driver running in a Kubernetes or OpenShift Pod. This can help trace execution
+flow, find bugs, and understand how components interact. The workflow updates
+existing workloads and forwards Delve's port to the developer's workstation; it
+does not install duplicate Deployments or create a Service or Route for Delve.
 
 The normal operator image does not contain or run Delve. The debug image is
 selected only when `DEBUG=true` is passed to the focused installer target.
@@ -298,6 +307,21 @@ make -C osac-installer build-osac-operator \
 
 ### Install selected services
 
+> **Why `install-services`?** Before this workflow, developers generally had to
+> build each component image separately, manage tags and registry pushes
+> themselves, and manually edit Helm values or Deployment resources to enable
+> Delve, tracing permissions, probe changes, and paused/continued startup. They
+> then had to reverse those edits to restore normal operation. This meant many
+> manual steps, configuration drift, and a risk of leaving debug settings behind.
+>
+> The unified target selects the normal or debug image flavor, applies common
+> build/push and cross-platform options, and resolves image references from the
+> shared mapping file or command-line overrides. It then configures the
+> appropriate Helm release and rolls out the selected resources automatically,
+> including CSI's separate release. Developers do not need to hand-edit the
+> Deployment manifests. This workflow is for development and troubleshooting;
+> it is not intended for production.
+
 `install-services` updates the existing umbrella release for selected
 `osac-operator`/`fulfillment-service` components and calls the independent
 `install-csi-driver` target for `csi-driver`. The CSI target upgrades the
@@ -496,7 +520,13 @@ currently running Pod. Use its container name with `-c`:
 ./debug.sh status <operator-pod-name> -n osac -c manager
 ./debug.sh stop <operator-pod-name> -n osac -c manager
 ./debug.sh start <fulfillment-pod-name> -n osac -c grpc-server
+./debug.sh start <csi-controller-pod-name> -n osac-csi -c osac-csi-driver
+./debug.sh start <csi-node-pod-name> -n osac-csi -c osac-csi-driver
 ```
+
+The CSI controller is a Deployment and the node driver is a DaemonSet. The
+example target configuration assigns them local ports `2350` and `2351`,
+respectively; for the DaemonSet, start one selected node Pod at a time.
 
 If the OpenShift kubeconfig is not the current default, prefix the commands with
 `KUBECONFIG=/path/to/openshift.kubeconfig`.
@@ -511,6 +541,27 @@ transport is `port-forward`; set `transport: exec` in a target's
 `Remote Debug: [<workload-name>]`, and its source paths come from
 `substitutePath`. Process discovery ignores Go's `** telemetry **` subprocess,
 which uses the same `dlv` executable name but is not a Delve server.
+
+### Interactive TUI
+
+Run `./debug.sh tui` (or `./debug tui`) from the `debug-me` checkout. The TUI
+discovers the configured workloads and groups their Pods. Use Up/Down to select
+rows, Enter to expand or collapse a workload, and `x` or Space on a Pod row to
+start or stop its tunnel. CSI controller and node targets appear like other
+workloads; a DaemonSet session stays pinned to the selected node.
+
+Press `i` on a Pod row for its IDE setup modal: VS Code is the first tab and
+GoLand the second. Tab or Left/Right changes tabs; `y` copies the current tab's
+configuration or instructions when a native clipboard command is available.
+Use Up/Down to scroll the modal and Esc to close it. The VS Code snippet uses
+the connected session's local port, or the configured port before connecting.
+
+Press `/` to filter by namespace, workload, container, Pod, node, status, or
+image; `c` clears the filter. Press `r` to refresh. The details pane reports
+session status, and the TUI supervises prestarted Delve tunnels across Pod or
+container restarts. Reattach the IDE after a replacement Pod is connected. TUI
+sessions and logs are in memory; `q` stops local tunnels and exits without
+changing cluster workloads. Esc outside the modal does not exit.
 
 The helper also supports helper-managed attach for containers without a
 prestarted Delve server: it downloads and checksum-verifies a matching Delve

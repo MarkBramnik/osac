@@ -1,15 +1,27 @@
 # Remote debugging OSAC components
 
-This feature provides IDE connections to the OSAC Operator manager, four
-Fulfillment processes, and the CSI controller and node driver running inside a
-cluster. For full setup details and variable reference, see the
+This is a unified, opt-in development workflow for building and deploying
+component images. It provides common controls for normal or Delve-enabled builds,
+cross-platform compilation, and image reference management, alongside the
+debugging helper and deployment settings.
+
+Currently integrated components are the OSAC Operator, Fulfillment service, and
+CSI driver. Other components may be added later if the project decides to
+integrate them with this workflow; support is not automatic for every component.
+For setup details and the variable reference, see the
 [developer guide](../guides/developer/remote-debugging.md).
+
+> **Development only:** This feature is intended for development and
+> troubleshooting, not production use. Do not deploy Delve-enabled images or
+> debugging settings in production.
 
 ## 1. Goal
 
-Debug the operator manager, Fulfillment controller/gRPC/REST/event-publisher
-processes, or the CSI controller and node processes in their existing
-workloads. The normal images do not include or run Delve.
+Debugging helps developers trace execution flow across components, find and
+diagnose bugs, and learn how the system behaves. The workflow attaches to the
+operator manager, Fulfillment controller/gRPC/REST/event-publisher processes,
+or CSI controller and node processes in their existing workloads. Normal images
+do not include or run Delve.
 
 ## 2. Architecture and configuration
 
@@ -79,6 +91,42 @@ make -C osac-installer install-services \
 references can instead be stored in `~/.config/osac/image-mappings.json`;
 explicit image variables override those entries. `SERVICES` is the complete set
 of components to debug.
+
+> **Why use the unified `install-services` workflow?**
+>
+> Before this workflow, developers had to build and tag component images
+> separately, manage pushes and image references by hand, and make manual Helm
+> or Deployment edits to switch images and configure Delve, tracing permissions,
+> probes, and startup behavior. That was error-prone and required manually
+> undoing those changes afterward.
+>
+> `install-services` provides common controls for normal/debug image flavors,
+> cross-platform builds, image mapping and push behavior, then applies the
+> matching Helm settings and rolls out the selected existing resources. This
+> includes the separate CSI release; no manual Deployment editing is needed.
+> This streamlined path is for development and troubleshooting only, not
+> production.
+
+The image-mapping file separates normal and debug image references by service.
+For example:
+
+```json
+{
+  "version": 1,
+  "images": {
+    "normal": {
+      "osac-operator": "quay.io/<your-org>/osac-operator:dev",
+      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev",
+      "csi-driver": "quay.io/<your-org>/osac-csi-driver:dev"
+    },
+    "debug": {
+      "osac-operator": "quay.io/<your-org>/osac-operator:dev-debug",
+      "fulfillment-service": "quay.io/<your-org>/fulfillment-service:dev-debug",
+      "csi-driver": "quay.io/<your-org>/osac-csi-driver:dev-debug"
+    }
+  }
+}
+```
 
 The operator and Fulfillment charts create separate debug ServiceAccounts; only
 the operator account has operator RBAC. The CSI chart creates separate
@@ -156,6 +204,22 @@ the cluster port-forward backend. It prints a VS Code remote-attach
 configuration named `Remote Debug: [osac-operator]`; place it inside the
 `configurations` array in `.vscode/launch.json`. `stop` only stops the local
 transport for this prestarted-server mode.
+
+The interactive TUI is available with `./debug.sh tui` (or `./debug tui`). It
+groups Pods by configured workload, including the CSI controller Deployment and
+node DaemonSet. Select a Pod row and press `x` or Space to start/stop its tunnel;
+the DaemonSet session is pinned to the selected node. Press `i` for a two-tab IDE
+setup modal (VS Code first, GoLand second); `y` copies the active tab's
+configuration or instructions when a native clipboard tool is installed. The
+VS Code snippet uses the active local port, or the configured port while
+disconnected.
+
+Use `/` to filter by namespace, workload, container, Pod, node, status, or image;
+`c` clears the filter and `r` refreshes discovery. The TUI reconnects its
+prestarted-Delve tunnel after Pod/container restarts; reattach the IDE after the
+replacement Pod connects. Sessions and logs are in memory. Pressing `q` stops
+local tunnels and exits without changing cluster workloads; Esc closes the modal
+but does not exit the TUI.
 
 ## 5. Helm differences from a regular deployment
 
