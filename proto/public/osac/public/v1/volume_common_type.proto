@@ -1,0 +1,39 @@
+//
+// Copyright (c) 2026 Red Hat, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+
+syntax = "proto3";
+
+package osac.public.v1;
+
+import "buf/validate/validate.proto";
+
+// Type of the entity that owns a volume. The architect-agreed shape is a
+// typed reference (type + reference) reused by every owner kind.
+message VolumeOwner {
+  // Type of the owning entity.
+  VolumeOwnerType type = 1 [(buf.validate.field).enum.defined_only = true];
+
+  // Fulfillment record identifier of the owning entity named by type
+  // (for ComputeInstance: the ComputeInstance id, e.g. "ci-...").
+  string reference = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// Types of entities that can own a volume. New owner types are additive
+// enum values — the enum carries only supported values.
+enum VolumeOwnerType {
+  // Owner type is unknown or has not been specified.
+  VOLUME_OWNER_TYPE_UNSPECIFIED = 0;
+
+  // The volume is owned by a ComputeInstance (VMaaS).
+  VOLUME_OWNER_TYPE_COMPUTE_INSTANCE = 1;
+}

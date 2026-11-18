@@ -22,12 +22,8 @@ import "google/protobuf/timestamp.proto";
 import "osac/private/v1/metadata_type.proto";
 import "osac/private/v1/metering_type.proto";
 import "osac/private/v1/storage_common_type.proto";
+import "osac/private/v1/volume_common_type.proto";
 
-option (cleanapi.file).private = true;
-
-// Emit the public counterpart of this type into the osac.public.v1 package. Fields marked with
-// [(cleanapi.field).private = true] below (internal routing details) are stripped from the public
-// Volume type.
 option (cleanapi.file).package = "osac.public.v1";
 
 // Access modes for Volume resources, matching Kubernetes PersistentVolume access modes.
@@ -53,6 +49,11 @@ enum VolumeAccessMode {
 enum VolumeState {
   // State is unknown or has not been determined yet.
   VOLUME_STATE_UNSPECIFIED = 0;
+
+  // The volume record exists but the operator has not yet started provisioning.
+  // Every volume starts in this state; the transition to CREATING is written
+  // by the operator and persisted through the feedback controller loop.
+  VOLUME_STATE_PENDING = 6;
 
   // The volume is being provisioned on the storage backend.
   VOLUME_STATE_CREATING = 1;
@@ -114,7 +115,72 @@ message VolumeSpec {
   VolumeAccessMode access_mode = 3 [(buf.validate.field).enum.defined_only = true];
 
   // Optional CSI-style topology segments supplied by the volume requester.
-  VolumeTopology topology = 4;
+  // Visible only through the private API (CSI driver internal detail).
+  VolumeTopology topology = 4 [(cleanapi.field).private = true];
+
+  // Owning workload. Set only by the operator's create path; public
+  // Create/Update rejects a non-empty value. Absent for CaaS/CSI volumes
+  // and future standalone volumes.
+  VolumeOwner owner = 5;
+
+  // Disk source for VMaaS provisioning. Visible only through the private API.
+  VolumeSource source = 6 [(cleanapi.field).private = true];
+
+  // Provisioning target for VMaaS volumes, provided by the operator's CI
+  // controller in the Create request — the Volume CR is self-contained
+  // from birth. Visible only through the private API.
+  VolumeTarget target = 7 [(cleanapi.field).private = true];
+}
+
+// Disk source for VMaaS provisioning, modeled as a oneof mirroring CDI's
+// DataVolumeSource so future source kinds are additive members.
+message VolumeSource {
+  // Exactly one member must be set.
+  oneof content {
+    // Registry image source (e.g. "docker://quay.io/...").
+    VolumeSourceRegistry registry = 1;
+
+    // Blank (empty) disk source.
+    VolumeSourceBlank blank = 2;
+  }
+}
+
+// Registry image source for a VMaaS boot disk.
+message VolumeSourceRegistry {
+  // Full URL including scheme, CDI-compatible (e.g.
+  // "docker://quay.io/containerdisks/fedora:41").
+  string url = 1 [(buf.validate.field).string.min_len = 1];
+
+  // Image pull method. UNSPECIFIED is treated as NODE by the operator —
+  // the only supported mode today: the node pulls the image so the
+  // import needs no tenant network.
+  PullMethod pull_method = 2 [(buf.validate.field).enum.defined_only = true];
+
+  // Image pull method for registry sources.
+  enum PullMethod {
+    // Pull method is unspecified; treated as NODE.
+    PULL_METHOD_UNSPECIFIED = 0;
+
+    // The node's container runtime pulls the image (no tenant network needed).
+    PULL_METHOD_NODE = 1;
+  }
+}
+
+// Blank (empty) disk source for VMaaS additional disks.
+message VolumeSourceBlank {}
+
+// Placement of the provisioned DataVolume, provided by the CI controller
+// in the Create request.
+message VolumeTarget {
+  // Disk key on the owning ComputeInstance ("boot", "disk-1", ...).
+  string disk_key = 1 [(buf.validate.field).string.min_len = 1];
+
+  // VM namespace on the target cluster where the DataVolume is created.
+  string namespace = 2 [(buf.validate.field).string.min_len = 1];
+
+  // Deterministic DataVolume name ("<ci-cr-name>-root-disk",
+  // "<ci-cr-name>-disk-N") — the name the VM spec references.
+  string data_volume_name = 3 [(buf.validate.field).string.min_len = 1];
 }
 
 // Represents the current operational state of a Volume.
