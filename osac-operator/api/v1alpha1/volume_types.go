@@ -60,6 +60,95 @@ type VolumeSpec struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="topology is immutable"
 	Topology *VolumeTopology `json:"topology,omitempty"`
+
+	// Owner identifies the fulfillment workload that owns this volume.
+	// Empty for CaaS/CSI volumes. Immutable after creation.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="owner is immutable"
+	Owner *VolumeOwner `json:"owner,omitempty"`
+
+	// Source describes the VMaaS disk source (registry image or blank).
+	// Empty for CaaS/CSI volumes. Immutable after creation.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="source is immutable"
+	Source *VolumeSource `json:"source,omitempty"`
+
+	// Target names where the DataVolume is provisioned. The Volume CR
+	// is self-contained: the Volume controller never consults the
+	// owning ComputeInstance CR. Immutable after creation.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="target is immutable"
+	Target *VolumeTarget `json:"target,omitempty"`
+}
+
+// VolumeOwner is the architect-agreed typed-reference shape for the
+// entity that owns a volume.
+type VolumeOwner struct {
+	// Type of the owning entity.
+	// +kubebuilder:validation:Enum=ComputeInstance
+	Type VolumeOwnerType `json:"type"`
+
+	// Reference is the fulfillment record id of the owning entity.
+	// +kubebuilder:validation:MinLength=1
+	Reference string `json:"reference"`
+}
+
+// VolumeOwnerType identifies the type of entity that owns a volume.
+// +kubebuilder:validation:Enum=ComputeInstance
+type VolumeOwnerType string
+
+const (
+	VolumeOwnerTypeComputeInstance VolumeOwnerType = "ComputeInstance"
+)
+
+// VolumeSource describes the VMaaS disk source (registry image or blank).
+// Mirrors the proto oneof using CDI's pointer-member idiom.
+type VolumeSource struct {
+	// Registry is the registry image source (e.g. "docker://quay.io/...").
+	Registry *VolumeSourceRegistry `json:"registry,omitempty"`
+
+	// Blank is an empty disk source.
+	Blank *VolumeSourceBlank `json:"blank,omitempty"`
+}
+
+// VolumeSourceRegistry is a registry image source for a VMaaS boot disk.
+type VolumeSourceRegistry struct {
+	// URL is the full image URL including scheme.
+	// +kubebuilder:validation:MinLength=1
+	URL string `json:"url"`
+
+	// PullMethod is the image pull method. Empty/Unspecified is treated
+	// as Node by the controller; the create path writes Node explicitly.
+	// +kubebuilder:validation:Enum=Node
+	PullMethod VolumePullMethod `json:"pullMethod,omitempty"`
+}
+
+// VolumePullMethod is the image pull method for registry sources.
+// +kubebuilder:validation:Enum=Node
+type VolumePullMethod string
+
+const (
+	VolumePullMethodNode VolumePullMethod = "Node"
+)
+
+// VolumeSourceBlank is an empty disk source for VMaaS additional disks.
+type VolumeSourceBlank struct{}
+
+// VolumeTarget is the placement of the provisioned DataVolume,
+// provided by the CI controller in the Create request.
+type VolumeTarget struct {
+	// DiskKey on the owning ComputeInstance ("boot", "disk-1", ...).
+	// +kubebuilder:validation:MinLength=1
+	DiskKey string `json:"diskKey"`
+
+	// Namespace on the target cluster where the DataVolume is created.
+	// +kubebuilder:validation:MinLength=1
+	Namespace string `json:"namespace"`
+
+	// DataVolumeName is the deterministic DataVolume name the VM spec
+	// references.
+	// +kubebuilder:validation:MinLength=1
+	DataVolumeName string `json:"dataVolumeName"`
 }
 
 // VolumeAccessMode defines valid Kubernetes PersistentVolume access modes.
