@@ -240,7 +240,7 @@ var _ = Describe("setDefaults", func() {
 		t.setDefaults()
 
 		Expect(t.volume.GetStatus().GetState()).To(
-			Equal(privatev1.VolumeState_VOLUME_STATE_CREATING),
+			Equal(privatev1.VolumeState_VOLUME_STATE_PENDING),
 		)
 	})
 
@@ -274,7 +274,7 @@ var _ = Describe("setDefaults", func() {
 
 		Expect(t.volume.HasStatus()).To(BeTrue())
 		Expect(t.volume.GetStatus().GetState()).To(
-			Equal(privatev1.VolumeState_VOLUME_STATE_CREATING),
+			Equal(privatev1.VolumeState_VOLUME_STATE_PENDING),
 		)
 	})
 })
@@ -351,7 +351,7 @@ var _ = Describe("update", func() {
 			ctrl := gomock.NewController(GinkgoT())
 			hubs := controllers.NewMockHubCache(ctrl)
 			if ordinary {
-				volume.GetStatus().SetState(privatev1.VolumeState_VOLUME_STATE_CREATING)
+				volume.GetStatus().SetState(privatev1.VolumeState_VOLUME_STATE_PENDING)
 				volume.GetStatus().SetHub("hub-1")
 				hubs.EXPECT().Get(gomock.Any(), "hub-1").Return(&controllers.HubEntry{Namespace: "test-ns", Client: hubClient}, nil)
 			}
@@ -380,7 +380,7 @@ var _ = Describe("update", func() {
 			if ordinary {
 				Expect(created.Items).To(HaveLen(1))
 				Expect(created.Items[0].Spec.Topology.Segments).To(Equal(volume.GetSpec().GetTopology().GetSegments()))
-				Expect(volume.GetStatus().GetState()).To(Equal(privatev1.VolumeState_VOLUME_STATE_CREATING))
+				Expect(volume.GetStatus().GetState()).To(Equal(privatev1.VolumeState_VOLUME_STATE_PENDING))
 			} else {
 				Expect(created.Items).To(BeEmpty())
 				Expect(proto.Equal(volume, original)).To(BeTrue())
@@ -428,7 +428,7 @@ var _ = Describe("update", func() {
 			task := &task{r: &function{logger: logger, hubCache: hubs}, volume: volume}
 			err := task.update(context.Background())
 			Expect(err).To(MatchError("standalone hub lookup"))
-			Expect(volume.GetStatus().GetState()).To(Equal(privatev1.VolumeState_VOLUME_STATE_CREATING))
+			Expect(volume.GetStatus().GetState()).To(Equal(privatev1.VolumeState_VOLUME_STATE_PENDING))
 			Expect(volume.GetStatus().GetStateTransitionTime()).NotTo(BeNil())
 		},
 		Entry("legitimate placeholder node", map[string]string{"osac.io/node": "osac-volume-registration-pending"}),
@@ -506,7 +506,7 @@ var _ = Describe("update", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State:    privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State:    privatev1.VolumeState_VOLUME_STATE_PENDING,
 				Hub:      "hub-1",
 				Provider: "test-provider",
 				Protocol: privatev1.StorageProtocol_STORAGE_PROTOCOL_BLOCK,
@@ -571,7 +571,7 @@ var _ = Describe("update", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State:    privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State:    privatev1.VolumeState_VOLUME_STATE_PENDING,
 				Hub:      "hub-1",
 				Provider: "test-provider",
 				Protocol: privatev1.StorageProtocol_STORAGE_PROTOCOL_BLOCK,
@@ -1042,7 +1042,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State: privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State: privatev1.VolumeState_VOLUME_STATE_PENDING,
 				Hub:   "hub-1",
 			}.Build(),
 		}.Build()
@@ -1103,7 +1103,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State: privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State: privatev1.VolumeState_VOLUME_STATE_PENDING,
 			}.Build(),
 		}.Build()
 
@@ -1146,7 +1146,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State: privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State: privatev1.VolumeState_VOLUME_STATE_PENDING,
 			}.Build(),
 		}.Build()
 
@@ -1203,7 +1203,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State: privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State: privatev1.VolumeState_VOLUME_STATE_PENDING,
 				Hub:   "hub-1",
 			}.Build(),
 		}.Build()
@@ -1219,7 +1219,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("connection refused"))
 		Expect(volume.GetStatus().GetState()).To(
-			Equal(privatev1.VolumeState_VOLUME_STATE_CREATING))
+			Equal(privatev1.VolumeState_VOLUME_STATE_PENDING))
 	})
 
 	It("requeues without marking FAILED on transient delete error", func() {
@@ -1266,7 +1266,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State: privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State: privatev1.VolumeState_VOLUME_STATE_PENDING,
 				Hub:   "hub-1",
 			}.Build(),
 		}.Build()
@@ -1282,7 +1282,7 @@ var _ = Describe("Kubernetes validation error handling", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("connection refused"))
 		Expect(volume.GetStatus().GetState()).To(
-			Equal(privatev1.VolumeState_VOLUME_STATE_CREATING))
+			Equal(privatev1.VolumeState_VOLUME_STATE_PENDING))
 	})
 })
 
@@ -1335,7 +1335,7 @@ var _ = Describe("create status population", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State:    privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State:    privatev1.VolumeState_VOLUME_STATE_PENDING,
 				Hub:      "hub-1",
 				Provider: "vast",
 				Protocol: privatev1.StorageProtocol_STORAGE_PROTOCOL_BLOCK,
@@ -1412,7 +1412,7 @@ var _ = Describe("create status population", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State:    privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State:    privatev1.VolumeState_VOLUME_STATE_PENDING,
 				Hub:      "hub-1",
 				Provider: "vast",
 				Protocol: privatev1.StorageProtocol_STORAGE_PROTOCOL_BLOCK,
@@ -1497,7 +1497,7 @@ var _ = Describe("create status population", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State:    privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State:    privatev1.VolumeState_VOLUME_STATE_PENDING,
 				Hub:      "hub-1",
 				Provider: "vast",
 				Protocol: privatev1.StorageProtocol_STORAGE_PROTOCOL_BLOCK,
@@ -1583,7 +1583,7 @@ var _ = Describe("create status population", func() {
 				AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
 			}.Build(),
 			Status: privatev1.VolumeStatus_builder{
-				State:    privatev1.VolumeState_VOLUME_STATE_CREATING,
+				State:    privatev1.VolumeState_VOLUME_STATE_PENDING,
 				Hub:      "hub-1",
 				Provider: "vast",
 				Protocol: privatev1.StorageProtocol_STORAGE_PROTOCOL_BLOCK,

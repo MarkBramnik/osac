@@ -261,7 +261,7 @@ func (t *task) setDefaults() {
 		t.volume.SetStatus(&privatev1.VolumeStatus{})
 	}
 	if t.volume.GetStatus().GetState() == privatev1.VolumeState_VOLUME_STATE_UNSPECIFIED {
-		t.volume.GetStatus().SetState(privatev1.VolumeState_VOLUME_STATE_CREATING)
+		t.volume.GetStatus().SetState(privatev1.VolumeState_VOLUME_STATE_PENDING)
 		t.volume.GetStatus().SetStateTransitionTime(controllers.NowTruncated())
 	}
 }
@@ -328,21 +328,36 @@ func (t *task) delete(ctx context.Context) (err error) {
 	return controllers.RequeueAfterKubernetesDeletion("volume")
 }
 
-// selectHub assigns a hub to the volume. Unlike resources that inherit their
-// hub from a parent (e.g. NATGateway inherits from VirtualNetwork), volumes
-// are independent, so the reconciler picks a hub randomly from the available
-// hubs (same as ComputeInstance).
+// selectHub assigns a hub to the volume. Owned volumes inherit their hub
+// from the owning ComputeInstance (co-located with the CI CR); ownerless
+// volumes pick a hub randomly from the available hubs (same as
+// ComputeInstance).
 func (t *task) selectHub(ctx context.Context) error {
 	t.hubId = t.volume.GetStatus().GetHub()
 	if t.hubId == "" {
-		response, err := t.r.hubsClient.List(ctx, privatev1.HubsListRequest_builder{}.Build())
-		if err != nil {
-			return err
+		if owner := t.volume.GetSpec().GetOwner(); owner != nil && owner.GetReference() != "" {
+			// Owned volume: inherit the hub from the owning ComputeInstance.
+			parent, err := t.r.computeInstancesClient.Get(ctx, privatev1.ComputeInstancesGetRequest_builder{
+				Id: owner.GetReference(),
+			}.Build())
+			if err != nil {
+				return fmt.Errorf("looking up owning ComputeInstance %s for hub selection: %w", owner.GetReference(), err)
+			}
+			if parent == nil || parent.Object == nil || parent.Object.GetStatus().GetHub() == "" {
+				return fmt.Errorf("owning ComputeInstance %s has no hub assigned yet", owner.GetReference())
+			}
+			t.hubId = parent.Object.GetStatus().GetHub()
+		} else {
+			// Ownerless volume: pick a random hub (same as ComputeInstance).
+			response, err := t.r.hubsClient.List(ctx, privatev1.HubsListRequest_builder{}.Build())
+			if err != nil {
+				return err
+			}
+			if response == nil || len(response.Items) == 0 {
+				return errors.New("no hubs available")
+			}
+			t.hubId = response.Items[rand.IntN(len(response.Items))].GetId()
 		}
-		if response == nil || len(response.Items) == 0 {
-			return errors.New("no hubs available")
-		}
-		t.hubId = response.Items[rand.IntN(len(response.Items))].GetId()
 	}
 	t.r.logger.DebugContext(
 		ctx,
@@ -453,6 +468,55 @@ func (t *task) buildSpec() osacv1alpha1.VolumeSpec {
 		SizeGiB:     t.volume.GetSpec().GetSizeGib(),
 		AccessMode:  protoAccessModeToCRD(t.volume.GetSpec().GetAccessMode()),
 		Topology:    topology,
+		Owner:       protoOwnerToCRD(t.volume.GetSpec().GetOwner()),
+		Source:      protoSourceToCRD(t.volume.GetSpec().GetSource()),
+		Target:      protoTargetToCRD(t.volume.GetSpec().GetTarget()),
+	}
+}
+
+// protoOwnerToCRD converts the proto VolumeOwner to the CRD VolumeOwner.
+// Returns nil when the proto owner is absent (CaaS/CSI volumes).
+func protoOwnerToCRD(owner *privatev1.VolumeOwner) *osacv1alpha1.VolumeOwner {
+	if owner == nil {
+		return nil
+	}
+	ownerType := osacv1alpha1.VolumeOwnerTypeComputeInstance
+	return &osacv1alpha1.VolumeOwner{
+		Type:      ownerType,
+		Reference: owner.GetReference(),
+	}
+}
+
+// protoSourceToCRD converts the proto VolumeSource to the CRD VolumeSource.
+// Returns nil when the proto source is absent (CaaS/CSI volumes).
+func protoSourceToCRD(source *privatev1.VolumeSource) *osacv1alpha1.VolumeSource {
+	if source == nil {
+		return nil
+	}
+	crdSource := &osacv1alpha1.VolumeSource{}
+	if registry := source.GetRegistry(); registry != nil {
+		pullMethod := osacv1alpha1.VolumePullMethodNode
+		crdSource.Registry = &osacv1alpha1.VolumeSourceRegistry{
+			URL:        registry.GetUrl(),
+			PullMethod: pullMethod,
+		}
+	}
+	if source.GetBlank() != nil {
+		crdSource.Blank = &osacv1alpha1.VolumeSourceBlank{}
+	}
+	return crdSource
+}
+
+// protoTargetToCRD converts the proto VolumeTarget to the CRD VolumeTarget.
+// Returns nil when the proto target is absent (CaaS/CSI volumes).
+func protoTargetToCRD(target *privatev1.VolumeTarget) *osacv1alpha1.VolumeTarget {
+	if target == nil {
+		return nil
+	}
+	return &osacv1alpha1.VolumeTarget{
+		DiskKey:        target.GetDiskKey(),
+		Namespace:      target.GetNamespace(),
+		DataVolumeName: target.GetDataVolumeName(),
 	}
 }
 
