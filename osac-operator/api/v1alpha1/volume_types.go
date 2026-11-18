@@ -149,6 +149,13 @@ type VolumeTarget struct {
 	// references.
 	// +kubebuilder:validation:MinLength=1
 	DataVolumeName string `json:"dataVolumeName"`
+
+	// TargetCluster is the identifier of the cluster where the
+	// DataVolume is created. Read from the operator's configured
+	// remote cluster by the CI controller; enables multi-cluster
+	// support without code changes.
+	// +kubebuilder:validation:MinLength=1
+	TargetCluster string `json:"targetCluster"`
 }
 
 // VolumeAccessMode defines valid Kubernetes PersistentVolume access modes.
