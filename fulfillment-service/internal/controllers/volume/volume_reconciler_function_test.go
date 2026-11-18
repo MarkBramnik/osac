@@ -227,6 +227,99 @@ var _ = Describe("buildSpec", func() {
 		spec := t.buildSpec()
 		Expect(spec.AccessMode).To(Equal(osacv1alpha1.VolumeAccessModeReadWriteOnce))
 	})
+
+	It("maps owner, source, and target to the CRD spec", func() {
+		t := &task{
+			volume: privatev1.Volume_builder{
+				Id: "vol-buildspec-owned",
+				Spec: privatev1.VolumeSpec_builder{
+					StorageTier: "tier-test",
+					SizeGib:     10,
+					AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
+					Owner: privatev1.VolumeOwner_builder{
+						Type:      privatev1.VolumeOwnerType_VOLUME_OWNER_TYPE_COMPUTE_INSTANCE,
+						Reference: "ci-test-001",
+					}.Build(),
+					Source: privatev1.VolumeSource_builder{
+						Registry: privatev1.VolumeSourceRegistry_builder{
+							Url:        "docker://quay.io/test/image:latest",
+							PullMethod: privatev1.VolumeSourceRegistry_PULL_METHOD_NODE,
+						}.Build(),
+					}.Build(),
+					Target: privatev1.VolumeTarget_builder{
+						DiskKey:        "boot",
+						Namespace:      "tenant-a-vm",
+						DataVolumeName: "vm-test-root-disk",
+					}.Build(),
+				}.Build(),
+			}.Build(),
+		}
+
+		spec := t.buildSpec()
+
+		Expect(spec.Owner).NotTo(BeNil())
+		Expect(spec.Owner.Type).To(Equal(osacv1alpha1.VolumeOwnerTypeComputeInstance))
+		Expect(spec.Owner.Reference).To(Equal("ci-test-001"))
+		Expect(spec.Source).NotTo(BeNil())
+		Expect(spec.Source.Registry).NotTo(BeNil())
+		Expect(spec.Source.Registry.URL).To(Equal("docker://quay.io/test/image:latest"))
+		Expect(spec.Source.Registry.PullMethod).To(Equal(osacv1alpha1.VolumePullMethodNode))
+		Expect(spec.Source.Blank).To(BeNil())
+		Expect(spec.Target).NotTo(BeNil())
+		Expect(spec.Target.DiskKey).To(Equal("boot"))
+		Expect(spec.Target.Namespace).To(Equal("tenant-a-vm"))
+		Expect(spec.Target.DataVolumeName).To(Equal("vm-test-root-disk"))
+	})
+
+	It("maps blank source for additional disks", func() {
+		t := &task{
+			volume: privatev1.Volume_builder{
+				Id: "vol-buildspec-blank",
+				Spec: privatev1.VolumeSpec_builder{
+					StorageTier: "tier-test",
+					SizeGib:     20,
+					AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
+					Owner: privatev1.VolumeOwner_builder{
+						Type:      privatev1.VolumeOwnerType_VOLUME_OWNER_TYPE_COMPUTE_INSTANCE,
+						Reference: "ci-test-001",
+					}.Build(),
+					Source: privatev1.VolumeSource_builder{
+						Blank: &privatev1.VolumeSourceBlank{},
+					}.Build(),
+					Target: privatev1.VolumeTarget_builder{
+						DiskKey:        "disk-1",
+						Namespace:      "tenant-a-vm",
+						DataVolumeName: "vm-test-disk-1",
+					}.Build(),
+				}.Build(),
+			}.Build(),
+		}
+
+		spec := t.buildSpec()
+
+		Expect(spec.Source).NotTo(BeNil())
+		Expect(spec.Source.Blank).NotTo(BeNil())
+		Expect(spec.Source.Registry).To(BeNil())
+	})
+
+	It("leaves owner, source, and target nil for ownerless volumes", func() {
+		t := &task{
+			volume: privatev1.Volume_builder{
+				Id: "vol-buildspec-ownerless",
+				Spec: privatev1.VolumeSpec_builder{
+					StorageTier: "gold",
+					SizeGib:     100,
+					AccessMode:  privatev1.VolumeAccessMode_VOLUME_ACCESS_MODE_READ_WRITE_ONCE,
+				}.Build(),
+			}.Build(),
+		}
+
+		spec := t.buildSpec()
+
+		Expect(spec.Owner).To(BeNil())
+		Expect(spec.Source).To(BeNil())
+		Expect(spec.Target).To(BeNil())
+	})
 })
 
 var _ = Describe("setDefaults", func() {
