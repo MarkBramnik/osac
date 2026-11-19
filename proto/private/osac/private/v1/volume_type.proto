@@ -145,25 +145,20 @@ message VolumeSource {
   }
 }
 
-// Registry image source for a VMaaS boot disk.
+// Registry image source for a VMaaS boot disk. References the DiskImage
+// catalog object — the Volume controller resolves it via the DiskImages
+// API to get the registry URL, pull secret, and certificate details.
+// The DiskImage is the single source of truth for image-pulling
+// configuration; OSAC-7339 enriches it with pull-secret and
+// certificate references for private registries.
 message VolumeSourceRegistry {
-  // Full URL including scheme, CDI-compatible (e.g.
-  // "docker://quay.io/containerdisks/fedora:41").
-  string url = 1 [(buf.validate.field).string.min_len = 1];
-
-  // Image pull method. UNSPECIFIED is treated as NODE by the operator —
-  // the only supported mode today: the node pulls the image so the
-  // import needs no tenant network.
-  PullMethod pull_method = 2 [(buf.validate.field).enum.defined_only = true];
-
-  // Image pull method for registry sources.
-  enum PullMethod {
-    // Pull method is unspecified; treated as NODE.
-    PULL_METHOD_UNSPECIFIED = 0;
-
-    // The node's container runtime pulls the image (no tenant network needed).
-    PULL_METHOD_NODE = 1;
-  }
+  // Fulfillment record identifier of the DiskImage to pull.
+  // The Volume controller calls DiskImages.Get to resolve the source
+  // URL and (when the DiskImage has one) the pull secret. For private
+  // registries with pullMethod: node, the controller creates a
+  // ServiceAccount with imagePullSecrets in the target namespace and
+  // sets spec.serviceAccountName on the DataVolume.
+  string disk_image_id = 1 [(buf.validate.field).string.min_len = 1];
 }
 
 // Blank (empty) disk source for VMaaS additional disks.

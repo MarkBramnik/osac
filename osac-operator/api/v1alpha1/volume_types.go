@@ -112,24 +112,15 @@ type VolumeSource struct {
 }
 
 // VolumeSourceRegistry is a registry image source for a VMaaS boot disk.
+// References the DiskImage catalog object — the Volume controller resolves
+// it via the DiskImages API to get the URL, pull secret, and certificate.
 type VolumeSourceRegistry struct {
-	// URL is the full image URL including scheme.
+	// DiskImageID is the fulfillment record identifier of the DiskImage
+	// to pull. The Volume controller resolves it to get the registry
+	// URL and (when present) pull secret details.
 	// +kubebuilder:validation:MinLength=1
-	URL string `json:"url"`
-
-	// PullMethod is the image pull method. Empty/Unspecified is treated
-	// as Node by the controller; the create path writes Node explicitly.
-	// +kubebuilder:validation:Enum=Node
-	PullMethod VolumePullMethod `json:"pullMethod,omitempty"`
+	DiskImageID string `json:"diskImageId"`
 }
-
-// VolumePullMethod is the image pull method for registry sources.
-// +kubebuilder:validation:Enum=Node
-type VolumePullMethod string
-
-const (
-	VolumePullMethodNode VolumePullMethod = "Node"
-)
 
 // VolumeSourceBlank is an empty disk source for VMaaS additional disks.
 type VolumeSourceBlank struct{}

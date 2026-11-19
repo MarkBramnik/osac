@@ -127,22 +127,15 @@ spec:
                   registry:
                     description: Registry is the registry image source (e.g. "docker://quay.io/...").
                     properties:
-                      pullMethod:
-                        allOf:
-                        - enum:
-                          - Node
-                        - enum:
-                          - Node
+                      diskImageId:
                         description: |-
-                          PullMethod is the image pull method. Empty/Unspecified is treated
-                          as Node by the controller; the create path writes Node explicitly.
-                        type: string
-                      url:
-                        description: URL is the full image URL including scheme.
+                          DiskImageID is the fulfillment record identifier of the DiskImage
+                          to pull. The Volume controller resolves it to get the registry
+                          URL and (when present) pull secret details.
                         minLength: 1
                         type: string
                     required:
-                    - url
+                    - diskImageId
                     type: object
                 type: object
                 x-kubernetes-validations:

@@ -495,10 +495,8 @@ func protoSourceToCRD(source *privatev1.VolumeSource) *osacv1alpha1.VolumeSource
 	}
 	crdSource := &osacv1alpha1.VolumeSource{}
 	if registry := source.GetRegistry(); registry != nil {
-		pullMethod := osacv1alpha1.VolumePullMethodNode
 		crdSource.Registry = &osacv1alpha1.VolumeSourceRegistry{
-			URL:        registry.GetUrl(),
-			PullMethod: pullMethod,
+			DiskImageID: registry.GetDiskImageId(),
 		}
 	}
 	if source.GetBlank() != nil {

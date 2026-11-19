@@ -242,8 +242,7 @@ var _ = Describe("buildSpec", func() {
 					}.Build(),
 					Source: privatev1.VolumeSource_builder{
 						Registry: privatev1.VolumeSourceRegistry_builder{
-							Url:        "docker://quay.io/test/image:latest",
-							PullMethod: privatev1.VolumeSourceRegistry_PULL_METHOD_NODE,
+							DiskImageId: "di-test-001",
 						}.Build(),
 					}.Build(),
 					Target: privatev1.VolumeTarget_builder{
@@ -263,8 +262,7 @@ var _ = Describe("buildSpec", func() {
 		Expect(spec.Owner.Reference).To(Equal("ci-test-001"))
 		Expect(spec.Source).NotTo(BeNil())
 		Expect(spec.Source.Registry).NotTo(BeNil())
-		Expect(spec.Source.Registry.URL).To(Equal("docker://quay.io/test/image:latest"))
-		Expect(spec.Source.Registry.PullMethod).To(Equal(osacv1alpha1.VolumePullMethodNode))
+		Expect(spec.Source.Registry.DiskImageID).To(Equal("di-test-001"))
 		Expect(spec.Source.Blank).To(BeNil())
 		Expect(spec.Target).NotTo(BeNil())
 		Expect(spec.Target.DiskKey).To(Equal("boot"))
