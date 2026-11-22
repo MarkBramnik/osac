@@ -240,10 +240,10 @@ var _ = Describe("buildSpec", func() {
 						Type:      privatev1.VolumeOwnerType_VOLUME_OWNER_TYPE_COMPUTE_INSTANCE,
 						Reference: "ci-test-001",
 					}.Build(),
-					Source: privatev1.VolumeSource_builder{
-						Registry: privatev1.VolumeSourceRegistry_builder{
-							DiskImageId: "di-test-001",
-						}.Build(),
+					DiskImage: privatev1.DiskImageReference_builder{
+						Id:      "di-test-001",
+						Name:    "fedora-test",
+						Project: "proj-test",
 					}.Build(),
 					Target: privatev1.VolumeTarget_builder{
 						DiskKey:        "boot",
@@ -260,10 +260,10 @@ var _ = Describe("buildSpec", func() {
 		Expect(spec.Owner).NotTo(BeNil())
 		Expect(spec.Owner.Type).To(Equal(osacv1alpha1.VolumeOwnerTypeComputeInstance))
 		Expect(spec.Owner.Reference).To(Equal("ci-test-001"))
-		Expect(spec.Source).NotTo(BeNil())
-		Expect(spec.Source.Registry).NotTo(BeNil())
-		Expect(spec.Source.Registry.DiskImageID).To(Equal("di-test-001"))
-		Expect(spec.Source.Blank).To(BeNil())
+		Expect(spec.DiskImage).NotTo(BeNil())
+		Expect(spec.DiskImage.ID).To(Equal("di-test-001"))
+		Expect(spec.DiskImage.Name).To(Equal("fedora-test"))
+		Expect(spec.DiskImage.Project).To(Equal("proj-test"))
 		Expect(spec.Target).NotTo(BeNil())
 		Expect(spec.Target.DiskKey).To(Equal("boot"))
 		Expect(spec.Target.Namespace).To(Equal("tenant-a-vm"))
@@ -283,9 +283,7 @@ var _ = Describe("buildSpec", func() {
 						Type:      privatev1.VolumeOwnerType_VOLUME_OWNER_TYPE_COMPUTE_INSTANCE,
 						Reference: "ci-test-001",
 					}.Build(),
-					Source: privatev1.VolumeSource_builder{
-						Blank: &privatev1.VolumeSourceBlank{},
-					}.Build(),
+					// No DiskImage (blank disk)
 					Target: privatev1.VolumeTarget_builder{
 						DiskKey:        "disk-1",
 						Namespace:      "tenant-a-vm",
@@ -297,9 +295,7 @@ var _ = Describe("buildSpec", func() {
 
 		spec := t.buildSpec()
 
-		Expect(spec.Source).NotTo(BeNil())
-		Expect(spec.Source.Blank).NotTo(BeNil())
-		Expect(spec.Source.Registry).To(BeNil())
+		Expect(spec.DiskImage).To(BeNil())
 	})
 
 	It("leaves owner, source, and target nil for ownerless volumes", func() {
@@ -317,7 +313,7 @@ var _ = Describe("buildSpec", func() {
 		spec := t.buildSpec()
 
 		Expect(spec.Owner).To(BeNil())
-		Expect(spec.Source).To(BeNil())
+		Expect(spec.DiskImage).To(BeNil())
 		Expect(spec.Target).To(BeNil())
 	})
 })

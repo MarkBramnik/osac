@@ -81,6 +81,29 @@ spec:
                 x-kubernetes-validations:
                 - message: accessMode is immutable
                   rule: self == oldSelf
+              diskImage:
+                description: |-
+                  DiskImage references the DiskImage catalog object that describes
+                  the disk data. When set, the Volume controller resolves it via
+                  the DiskImages API to get the registry URL. When absent, the disk
+                  is blank (additional disks). Immutable after creation.
+                properties:
+                  id:
+                    description: ID is the fulfillment record identifier of the DiskImage.
+                    minLength: 1
+                    type: string
+                  name:
+                    description: Name is the DiskImage name (for observability).
+                    type: string
+                  project:
+                    description: Project is the DiskImage project (for observability).
+                    type: string
+                required:
+                - id
+                type: object
+                x-kubernetes-validations:
+                - message: diskImage is immutable
+                  rule: self == oldSelf
               owner:
                 description: |-
                   Owner identifies the fulfillment workload that owns this volume.
@@ -113,31 +136,6 @@ spec:
                 type: integer
                 x-kubernetes-validations:
                 - message: sizeGiB is immutable
-                  rule: self == oldSelf
-              source:
-                description: |-
-                  Source describes the VMaaS disk source (registry image or blank).
-                  Empty for CaaS/CSI volumes. Immutable after creation.
-                properties:
-                  blank:
-                    description: Blank is an empty disk source.
-                    type: object
-                  registry:
-                    description: Registry is the registry image source (e.g. "docker://quay.io/...").
-                    properties:
-                      diskImageId:
-                        description: |-
-                          DiskImageID is the fulfillment record identifier of the DiskImage
-                          to pull. The Volume controller resolves it to get the registry
-                          URL and (when present) pull secret details.
-                        minLength: 1
-                        type: string
-                    required:
-                    - diskImageId
-                    type: object
-                type: object
-                x-kubernetes-validations:
-                - message: source is immutable
                   rule: self == oldSelf
               storageTier:
                 description: |-

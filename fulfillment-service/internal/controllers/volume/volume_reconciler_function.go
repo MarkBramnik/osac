@@ -469,7 +469,7 @@ func (t *task) buildSpec() osacv1alpha1.VolumeSpec {
 		AccessMode:  protoAccessModeToCRD(t.volume.GetSpec().GetAccessMode()),
 		Topology:    topology,
 		Owner:       protoOwnerToCRD(t.volume.GetSpec().GetOwner()),
-		Source:      protoSourceToCRD(t.volume.GetSpec().GetSource()),
+		DiskImage:   protoDiskImageToCRD(t.volume.GetSpec().GetDiskImage()),
 		Target:      protoTargetToCRD(t.volume.GetSpec().GetTarget()),
 	}
 }
@@ -487,22 +487,17 @@ func protoOwnerToCRD(owner *privatev1.VolumeOwner) *osacv1alpha1.VolumeOwner {
 	}
 }
 
-// protoSourceToCRD converts the proto VolumeSource to the CRD VolumeSource.
-// Returns nil when the proto source is absent (CaaS/CSI volumes).
-func protoSourceToCRD(source *privatev1.VolumeSource) *osacv1alpha1.VolumeSource {
-	if source == nil {
+// protoDiskImageToCRD converts the proto DiskImageReference to the CRD
+// DiskImageReference. Returns nil when absent (blank disks / CaaS volumes).
+func protoDiskImageToCRD(di *privatev1.DiskImageReference) *osacv1alpha1.DiskImageReference {
+	if di == nil {
 		return nil
 	}
-	crdSource := &osacv1alpha1.VolumeSource{}
-	if registry := source.GetRegistry(); registry != nil {
-		crdSource.Registry = &osacv1alpha1.VolumeSourceRegistry{
-			DiskImageID: registry.GetDiskImageId(),
-		}
+	return &osacv1alpha1.DiskImageReference{
+		ID:      di.GetId(),
+		Name:    di.GetName(),
+		Project: di.GetProject(),
 	}
-	if source.GetBlank() != nil {
-		crdSource.Blank = &osacv1alpha1.VolumeSourceBlank{}
-	}
-	return crdSource
 }
 
 // protoTargetToCRD converts the proto VolumeTarget to the CRD VolumeTarget.

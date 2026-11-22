@@ -21,6 +21,7 @@ import "google/api/field_behavior.proto";
 import "google/protobuf/timestamp.proto";
 import "osac/private/v1/metadata_type.proto";
 import "osac/private/v1/metering_type.proto";
+import "osac/private/v1/disk_image_type.proto";
 import "osac/private/v1/storage_common_type.proto";
 import "osac/private/v1/volume_common_type.proto";
 
@@ -123,8 +124,13 @@ message VolumeSpec {
   // and future standalone volumes.
   VolumeOwner owner = 5;
 
-  // Disk source for VMaaS provisioning. Visible only through the private API.
-  VolumeSource source = 6 [(cleanapi.field).private = true];
+  // Disk image source for VMaaS provisioning. When set, the Volume
+  // controller resolves this reference via the DiskImages API to get
+  // the registry URL and creates a DataVolume. When absent, the disk is
+  // blank (additional disks). The DiskImage is the single source of
+  // truth for image-pulling configuration. Visible only through the
+  // private API.
+  DiskImageReference disk_image = 6 [(cleanapi.field).private = true];
 
   // Provisioning target for VMaaS volumes, provided by the operator's CI
   // controller in the Create request — the Volume CR is self-contained
@@ -132,37 +138,6 @@ message VolumeSpec {
   VolumeTarget target = 7 [(cleanapi.field).private = true];
 }
 
-// Disk source for VMaaS provisioning, modeled as a oneof mirroring CDI's
-// DataVolumeSource so future source kinds are additive members.
-message VolumeSource {
-  // Exactly one member must be set.
-  oneof content {
-    // Registry image source (e.g. "docker://quay.io/...").
-    VolumeSourceRegistry registry = 1;
-
-    // Blank (empty) disk source.
-    VolumeSourceBlank blank = 2;
-  }
-}
-
-// Registry image source for a VMaaS boot disk. References the DiskImage
-// catalog object — the Volume controller resolves it via the DiskImages
-// API to get the registry URL, pull secret, and certificate details.
-// The DiskImage is the single source of truth for image-pulling
-// configuration; OSAC-7339 enriches it with pull-secret and
-// certificate references for private registries.
-message VolumeSourceRegistry {
-  // Fulfillment record identifier of the DiskImage to pull.
-  // The Volume controller calls DiskImages.Get to resolve the source
-  // URL and (when the DiskImage has one) the pull secret. For private
-  // registries with pullMethod: node, the controller creates a
-  // ServiceAccount with imagePullSecrets in the target namespace and
-  // sets spec.serviceAccountName on the DataVolume.
-  string disk_image_id = 1 [(buf.validate.field).string.min_len = 1];
-}
-
-// Blank (empty) disk source for VMaaS additional disks.
-message VolumeSourceBlank {}
 
 // Placement of the provisioned DataVolume, provided by the CI controller
 // in the Create request.

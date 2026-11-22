@@ -67,11 +67,13 @@ type VolumeSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="owner is immutable"
 	Owner *VolumeOwner `json:"owner,omitempty"`
 
-	// Source describes the VMaaS disk source (registry image or blank).
-	// Empty for CaaS/CSI volumes. Immutable after creation.
+	// DiskImage references the DiskImage catalog object that describes
+	// the disk data. When set, the Volume controller resolves it via
+	// the DiskImages API to get the registry URL. When absent, the disk
+	// is blank (additional disks). Immutable after creation.
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="source is immutable"
-	Source *VolumeSource `json:"source,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="diskImage is immutable"
+	DiskImage *DiskImageReference `json:"diskImage,omitempty"`
 
 	// Target names where the DataVolume is provisioned. The Volume CR
 	// is self-contained: the Volume controller never consults the
@@ -124,6 +126,23 @@ type VolumeSourceRegistry struct {
 
 // VolumeSourceBlank is an empty disk source for VMaaS additional disks.
 type VolumeSourceBlank struct{}
+
+
+// DiskImageReference identifies a DiskImage catalog object.
+// The Volume controller resolves it via the DiskImages API.
+type DiskImageReference struct {
+	// ID is the fulfillment record identifier of the DiskImage.
+	// +kubebuilder:validation:MinLength=1
+	ID string `json:"id"`
+
+	// Name is the DiskImage name (for observability).
+	// +kubebuilder:validation:Optional
+	Name string `json:"name,omitempty"`
+
+	// Project is the DiskImage project (for observability).
+	// +kubebuilder:validation:Optional
+	Project string `json:"project,omitempty"`
+}
 
 // VolumeTarget is the placement of the provisioned DataVolume,
 // provided by the CI controller in the Create request.
