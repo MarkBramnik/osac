@@ -244,6 +244,7 @@ var _ = Describe("buildSpec", func() {
 						Id:      "di-test-001",
 						Name:    "fedora-test",
 						Project: "proj-test",
+						Shared:  true,
 					}.Build(),
 					Target: privatev1.VolumeTarget_builder{
 						DiskKey:        "boot",
@@ -264,6 +265,7 @@ var _ = Describe("buildSpec", func() {
 		Expect(spec.DiskImage.ID).To(Equal("di-test-001"))
 		Expect(spec.DiskImage.Name).To(Equal("fedora-test"))
 		Expect(spec.DiskImage.Project).To(Equal("proj-test"))
+		Expect(spec.DiskImage.Shared).To(BeTrue())
 		Expect(spec.Target).NotTo(BeNil())
 		Expect(spec.Target.DiskKey).To(Equal("boot"))
 		Expect(spec.Target.Namespace).To(Equal("tenant-a-vm"))

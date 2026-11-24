@@ -497,6 +497,7 @@ func protoDiskImageToCRD(di *privatev1.DiskImageReference) *osacv1alpha1.DiskIma
 		ID:      di.GetId(),
 		Name:    di.GetName(),
 		Project: di.GetProject(),
+		Shared:  di.GetShared(),
 	}
 }
 

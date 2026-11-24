@@ -142,6 +142,13 @@ type DiskImageReference struct {
 	// Project is the DiskImage project (for observability).
 	// +kubebuilder:validation:Optional
 	Project string `json:"project,omitempty"`
+
+	// Shared marks a shared-tenant DiskImage reference
+	// (fullResourceReference standard; carried verbatim from the CI
+	// spec, not interpreted by the Volume controller, which resolves
+	// by id).
+	// +kubebuilder:validation:Optional
+	Shared bool `json:"shared,omitempty"`
 }
 
 // VolumeTarget is the placement of the provisioned DataVolume,

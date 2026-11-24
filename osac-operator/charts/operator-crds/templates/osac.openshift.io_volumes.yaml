@@ -100,6 +100,13 @@ spec:
                   project:
                     description: Project is the DiskImage project (for observability).
                     type: string
+                  shared:
+                    description: |-
+                      Shared marks a shared-tenant DiskImage reference
+                      (fullResourceReference standard; carried verbatim from the CI
+                      spec, not interpreted by the Volume controller, which resolves
+                      by id).
+                    type: boolean
                 required:
                 - id
                 type: object
