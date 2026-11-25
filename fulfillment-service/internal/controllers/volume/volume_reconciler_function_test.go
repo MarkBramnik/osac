@@ -250,7 +250,6 @@ var _ = Describe("buildSpec", func() {
 						DiskKey:        "boot",
 						Namespace:      "tenant-a-vm",
 						DataVolumeName: "vm-test-root-disk",
-						TargetCluster:  "remote",
 					}.Build(),
 				}.Build(),
 			}.Build(),
@@ -270,7 +269,6 @@ var _ = Describe("buildSpec", func() {
 		Expect(spec.Target.DiskKey).To(Equal("boot"))
 		Expect(spec.Target.Namespace).To(Equal("tenant-a-vm"))
 		Expect(spec.Target.DataVolumeName).To(Equal("vm-test-root-disk"))
-		Expect(spec.Target.TargetCluster).To(Equal("remote"))
 	})
 
 	It("maps blank source for additional disks", func() {

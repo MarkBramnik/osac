@@ -151,14 +151,6 @@ message VolumeTarget {
   // Deterministic DataVolume name ("<ci-cr-name>-root-disk",
   // "<ci-cr-name>-disk-N") — the name the VM spec references.
   string data_volume_name = 3 [(buf.validate.field).string.min_len = 1];
-
-  // Target cluster identifier. The CI controller reads this from the
-  // operator's configured remote cluster; when multi-cluster support
-  // arrives, the value can vary per CI without code changes. Makes
-  // the Volume CR fully self-contained: the Volume controller selects
-  // the remote-cluster client from this field rather than assuming a
-  // single configured cluster.
-  string target_cluster = 4 [(buf.validate.field).string.min_len = 1];
 }
 
 // Represents the current operational state of a Volume.
